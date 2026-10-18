@@ -135,30 +135,8 @@ unsafe extern "C" {
 impl MallocStats {
     /// Sample every malloc zone of the calling process and sum them.
     pub fn sample() -> Self {
-        let mut zones: *mut *mut libc::c_void = std::ptr::null_mut();
-        let mut count: libc::c_uint = 0;
-        // SAFETY: `mach_task_self_` is a process-wide constant set up by the
-        // kernel before main; querying our own task with a NULL reader
-        // (meaning "read directly"); `zones` and `count` are valid out-pointers.
-        let kr = unsafe {
-            malloc_get_all_zones(
-                mach_task_self_,
-                std::ptr::null_mut(),
-                &raw mut zones,
-                &raw mut count,
-            )
-        };
         let mut total = Self::default();
-        if kr != libc::KERN_SUCCESS || zones.is_null() {
-            return total;
-        }
-        for i in 0..count as usize {
-            // SAFETY: `zones` points at `count` zone pointers owned by libmalloc,
-            // valid for the life of the process.
-            let zone = unsafe { *zones.add(i) };
-            if zone.is_null() {
-                continue;
-            }
+        for zone in zone_table() {
             let mut stats = MallocStatisticsT {
                 blocks_in_use: 0,
                 size_in_use: 0,
@@ -174,6 +152,182 @@ impl MallocStats {
         }
         total
     }
+}
+
+/// Live malloc blocks, found by walking every zone with its own introspection
+/// enumerator: the same walk Apple's `heap` and `leaks` perform.
+///
+/// This is the exact measurement. [`MallocStats`] (`malloc_zone_statistics`)
+/// is cheaper but over-counts at times: the nano zone can report one whole
+/// 16 KiB block (512 × 32 bytes, 341 × 48 bytes, ...) as in use while every
+/// slot in it is free, at moments that depend on timing and load. The
+/// enumerator reads the per-slot free lists and is not fooled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LiveBlocks {
+    /// Number of live allocations.
+    pub count: u64,
+    /// Bytes in live allocations.
+    pub bytes: u64,
+}
+
+/// `vm_range_t` from <malloc/malloc.h>.
+#[repr(C)]
+struct VmRange {
+    address: libc::vm_address_t,
+    size: libc::vm_size_t,
+}
+
+type MemoryReader = unsafe extern "C" fn(
+    libc::task_t,
+    libc::vm_address_t,
+    libc::vm_size_t,
+    *mut *mut libc::c_void,
+) -> libc::kern_return_t;
+type VmRangeRecorder =
+    unsafe extern "C" fn(libc::task_t, *mut libc::c_void, libc::c_uint, *mut VmRange, libc::c_uint);
+type Enumerator = unsafe extern "C" fn(
+    libc::task_t,
+    *mut libc::c_void,
+    libc::c_uint,
+    libc::vm_address_t,
+    MemoryReader,
+    VmRangeRecorder,
+) -> libc::kern_return_t;
+
+/// The leading fields of `malloc_zone_t` (<malloc/malloc.h>), up to the
+/// introspection table. Later fields vary by zone version and are not read.
+#[repr(C)]
+struct MallocZoneHead {
+    reserved1: *mut libc::c_void,
+    reserved2: *mut libc::c_void,
+    size: *const libc::c_void,
+    malloc: *const libc::c_void,
+    calloc: *const libc::c_void,
+    valloc: *const libc::c_void,
+    free: *const libc::c_void,
+    realloc: *const libc::c_void,
+    destroy: *const libc::c_void,
+    zone_name: *const libc::c_char,
+    batch_malloc: *const libc::c_void,
+    batch_free: *const libc::c_void,
+    introspect: *const MallocIntrospectionHead,
+}
+
+/// The first field of `malloc_introspection_t`; the rest is not needed.
+#[repr(C)]
+struct MallocIntrospectionHead {
+    enumerator: Option<Enumerator>,
+}
+
+/// `MALLOC_PTR_IN_USE_RANGE_TYPE`: report allocated blocks only.
+const MALLOC_PTR_IN_USE_RANGE_TYPE: libc::c_uint = 1;
+
+/// `memory_reader_t` for our own task: the memory is already mapped where it is.
+unsafe extern "C" fn read_own_memory(
+    _task: libc::task_t,
+    address: libc::vm_address_t,
+    _size: libc::vm_size_t,
+    local: *mut *mut libc::c_void,
+) -> libc::kern_return_t {
+    // SAFETY: libmalloc passes a valid out-pointer for the local address.
+    unsafe { *local = std::ptr::with_exposed_provenance_mut(address) };
+    libc::KERN_SUCCESS
+}
+
+/// `vm_range_recorder_t`: tally the ranges into the `LiveBlocks` behind `context`.
+unsafe extern "C" fn record_ranges(
+    _task: libc::task_t,
+    context: *mut libc::c_void,
+    _kind: libc::c_uint,
+    ranges: *mut VmRange,
+    count: libc::c_uint,
+) {
+    if count == 0 || ranges.is_null() || context.is_null() {
+        return;
+    }
+    // SAFETY: `context` is the `&mut LiveBlocks` that `LiveBlocks::sample`
+    // passed to the enumerator and keeps alive for the whole call; libmalloc
+    // hands over `count` initialised ranges.
+    let (total, ranges) = unsafe {
+        (
+            &mut *context.cast::<LiveBlocks>(),
+            std::slice::from_raw_parts(ranges, count as usize),
+        )
+    };
+    total.count += u64::from(count);
+    total.bytes += ranges.iter().map(|range| range.size as u64).sum::<u64>();
+}
+
+impl LiveBlocks {
+    /// Walk every malloc zone of the calling process and count live blocks.
+    ///
+    /// Call it at a quiet moment: zones are read without their locks, as
+    /// `heap` does on a suspended task, so a block another thread is
+    /// allocating or freeing right now may be counted or missed.
+    pub fn sample() -> io::Result<Self> {
+        let mut total = Self::default();
+        for zone in zone_table() {
+            // SAFETY: `zone` is a live malloc zone owned by libmalloc, laid out
+            // as `malloc_zone_t`; its introspection table pointer is valid for
+            // the life of the process.
+            let introspect = unsafe { (*zone.cast::<MallocZoneHead>()).introspect };
+            if introspect.is_null() {
+                continue;
+            }
+            // SAFETY: as above; `enumerator` is the table's first field.
+            let Some(enumerator) = (unsafe { (*introspect).enumerator }) else {
+                continue;
+            };
+            // SAFETY: an in-process enumeration of our own task. The two
+            // callbacks match libmalloc's `memory_reader_t` and
+            // `vm_range_recorder_t`, and `total` outlives the call, the only
+            // time `context` is dereferenced.
+            let kr = unsafe {
+                enumerator(
+                    mach_task_self_,
+                    (&raw mut total).cast(),
+                    MALLOC_PTR_IN_USE_RANGE_TYPE,
+                    zone.addr(),
+                    read_own_memory,
+                    record_ranges,
+                )
+            };
+            if kr != libc::KERN_SUCCESS {
+                return Err(io::Error::other(format!(
+                    "malloc zone enumerator failed: kern_return {kr}"
+                )));
+            }
+        }
+        Ok(total)
+    }
+}
+
+/// The process's malloc zones, straight from libmalloc's table (no copy).
+fn zone_table() -> impl Iterator<Item = *mut libc::c_void> {
+    let mut zones: *mut *mut libc::c_void = std::ptr::null_mut();
+    let mut count: libc::c_uint = 0;
+    // SAFETY: `mach_task_self_` is a process-wide constant set up by the
+    // kernel before main; querying our own task with a NULL reader (meaning
+    // "read directly"); `zones` and `count` are valid out-pointers.
+    let kr = unsafe {
+        malloc_get_all_zones(
+            mach_task_self_,
+            std::ptr::null_mut(),
+            &raw mut zones,
+            &raw mut count,
+        )
+    };
+    let count = if kr == libc::KERN_SUCCESS && !zones.is_null() {
+        count as usize
+    } else {
+        0
+    };
+    (0..count).filter_map(move |i| {
+        // SAFETY: `zones` points at `count` zone pointers owned by libmalloc,
+        // valid for the life of the process.
+        let zone = unsafe { *zones.add(i) };
+        (!zone.is_null()).then_some(zone)
+    })
 }
 
 /// `ri_user_time`/`ri_system_time` are in mach absolute time units.
@@ -219,6 +373,36 @@ mod tests {
         let usage = ProcessUsage::sample_self().expect("proc_pid_rusage on self");
         assert!(usage.phys_footprint > 0);
         assert!(usage.lifetime_max_phys_footprint >= usage.phys_footprint);
+    }
+
+    #[test]
+    fn live_blocks_see_live_allocations() {
+        // As below: other unit tests allocate concurrently, so use margins.
+        const BLOCK: u64 = 8 << 20;
+        const NOISE: u64 = 1 << 20;
+        const SMALL: usize = 5000;
+        let before = LiveBlocks::sample().unwrap();
+        let block = vec![1u8; BLOCK as usize];
+        let small: Vec<Box<[u8; 24]>> = (0..SMALL).map(|_| Box::new([1u8; 24])).collect();
+        let during = LiveBlocks::sample().unwrap();
+        assert!(
+            during.bytes >= before.bytes + BLOCK - NOISE,
+            "enumeration should see the {BLOCK}-byte block: {before:?} -> {during:?}"
+        );
+        assert!(
+            during.count >= before.count + (SMALL as u64) * 9 / 10,
+            "enumeration should see the {SMALL} nano blocks: {before:?} -> {during:?}"
+        );
+        drop((block, small));
+        let after = LiveBlocks::sample().unwrap();
+        assert!(
+            after.bytes < before.bytes + NOISE,
+            "the block should be gone again: {before:?} -> {after:?}"
+        );
+        assert!(
+            after.count < before.count + (SMALL as u64) / 10,
+            "the nano blocks should be gone again: {before:?} -> {after:?}"
+        );
     }
 
     #[test]

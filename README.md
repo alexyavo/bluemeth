@@ -1,11 +1,11 @@
-<p align="center"><img src="docs/icon.png" alt="Bluemeth icon" width="128"></p>
+<p align="center"><img src="docs/icon.png" alt="bluemeth icon" width="128"></p>
 
-# Bluemeth
+# bluemeth
 
 A keep-awake menu bar app for macOS that does what `caffeinate` does, without
 `caffeinate`. Written in Rust, one process, no polling, nothing spawned.
 
-<img src="docs/menu.png" alt="Bluemeth menu" width="245" align="right">
+<img src="docs/menu.png" alt="bluemeth menu" width="245" align="right">
 
 * **Prevent Display Sleep**, **Prevent Idle Sleep**, **Prevent System Sleep**
   and **Declare User Active**, each toggled independently. These are the four
@@ -30,7 +30,7 @@ Also in the box:
 
 `/usr/bin/caffeinate` is a thin wrapper over IOKit power assertions:
 `IOPMAssertionCreateWithProperties` per flag, `IOPMAssertionDeclareUserActivity`
-for `-u`, a `TimeoutSeconds` property for `-t`. Bluemeth calls the same four
+for `-u`, a `TimeoutSeconds` property for `-t`. bluemeth calls the same four
 IOKit functions directly from the process that wants to stay awake. A menu bar
 app that shells out to `caffeinate` instead pays for a second process on every
 toggle: `fork`/`exec`, dyld, a second heap, and a kill-and-wait to release.
@@ -38,7 +38,7 @@ toggle: `fork`/`exec`, dyld, a second heap, and a kill-and-wait to release.
 Measured on this machine (Apple silicon, macOS 27), full tables in
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md):
 
-| | in-process IOKit (Bluemeth) | spawn `caffeinate` |
+| | in-process IOKit (bluemeth) | spawn `caffeinate` |
 | --- | ---: | ---: |
 | Take 3 assertions | ~120 µs | ~7 ms |
 | Release them | ~70 µs | ~1.2 ms |
@@ -65,9 +65,10 @@ requirement, not a nice-to-have:
 * `unsafe` exists only at the FFI edges, every block has a `SAFETY:` comment,
   and `clippy::undocumented_unsafe_blocks` is a hard error.
 * `cargo test` includes end-to-end checks against `powerd`'s live assertion
-  table and a test that runs 20 000 create/release cycles and fails if the
-  live heap (bytes or block count, summed over every malloc zone) grows at
-  all after warm-up.
+  table and a test that runs create/release cycles in 10 000-cycle segments
+  and fails unless one segment leaves the live heap (every malloc block,
+  enumerated the way `heap` does it) completely unchanged in both block
+  count and bytes, which a per-cycle leak can never do.
 * `scripts/leakcheck.sh` runs Apple's `leaks` on the CLI (must report 0) and
   on the live app next to the Objective-C baseline app (must not exceed it,
   must not grow over time). `bluemeth-bench inproc` reports zero footprint
@@ -82,9 +83,9 @@ make build            # debug build of everything
 make test             # unit + integration tests (they talk to the real powerd)
 make lint             # rustfmt + clippy with -D warnings
 make run              # run the menu bar app unbundled (Launch at Login disabled)
-make bundle           # target/Bluemeth.app, ad-hoc signed
+make bundle           # target/bluemeth.app, ad-hoc signed
 make install          # ...and copy it to /Applications
-make login            # register /Applications/Bluemeth.app as a login item
+make login            # register /Applications/bluemeth.app as a login item
 make unlogin          # ...and remove it again
 make icon             # re-render assets/AppIcon.icns from assets/*.png (needs ImageMagick)
 make leaks            # scripts/leakcheck.sh
@@ -95,7 +96,7 @@ make bench            # release build + bluemeth-bench all
 (macOS 13+). The same switch is scriptable, which is what `make login` runs:
 
 ```sh
-/Applications/Bluemeth.app/Contents/MacOS/Bluemeth --login-item enable|disable|status
+/Applications/bluemeth.app/Contents/MacOS/bluemeth-app --login-item enable|disable|status
 ```
 
 The bundle is ad-hoc signed; replace `-` in `scripts/bundle.sh` with a
@@ -122,7 +123,7 @@ instead, for A/B comparisons.
 ```
 crates/core    bluemeth-core    Config, Inhibitor, IOKit backend, inspector, rusage sampler
 crates/cli     bluemeth         CLI (kqueue-based wait loop)
-crates/app     bluemeth-app     AppKit menu bar app via objc2, bundled as Bluemeth.app
+crates/app     bluemeth-app     AppKit menu bar app via objc2, bundled as bluemeth.app
 crates/bench   bluemeth-bench   benchmarks
 scripts/       bundle.sh, leakcheck.sh, leak-baseline.m
 docs/          ARCHITECTURE.md, BENCHMARKS.md, PLATFORMS.md

@@ -90,46 +90,52 @@ declaration (`bluemeth-bench inproc --iterations 30000 --user-active`):
 | delta  |              0 |             0 |
 
 The physical footprint moves in 16 KiB pages, so the core test
-`repeated_cycles_do_not_grow_memory` instead reads the live heap directly
-from every malloc zone (`malloc_zone_statistics`, byte-exact) after 1 000,
-11 000 and 21 000 cycles, pausing briefly before each sample so Apple's
-frameworks can drain their asynchronous bookkeeping. Three consecutive runs:
+`repeated_cycles_do_not_grow_memory` instead counts live malloc blocks
+directly, by walking every zone with libmalloc's own enumerator (the walk
+`heap` and `leaks` perform), after 1 000 warm-up cycles and then after every
+further 10 000, pausing briefly before each sample so Apple's frameworks can
+drain their asynchronous bookkeeping. The report for the first segment reads:
 
 ```
-cycles  1000..11000: live heap +49120 bytes (+1194 blocks)
-cycles 11000..21000: live heap     +0 bytes    (+0 blocks)
+cycles 1000..11000: live blocks +0 (+0 bytes) by enumeration;
+                    zone statistics +1105 blocks (+48912 bytes); footprint +32768 bytes
 ```
 
-About 49 KiB of small blocks is allocated once by the system frameworks
-during the first few thousand IPCs and never again; the test asserts on the
-second segment and fails above 16 KiB (an 8-byte-per-cycle leak would add
-80 KiB there, the 48-byte leak it was written for 480 KiB).
+Not one block is added by 10 000 cycles. The `malloc_zone_statistics` figure
+is printed next to it because it is misleading, and the reason earlier runs
+of this test appeared to show a one-time "warm-up" of about 49 KiB: the nano
+zone reports whole 16 KiB blocks (512 × 32 bytes, 341 × 48 bytes, ...) as in
+use while every slot in them is free, at moments that depend on timing and
+load; `heap` snapshots taken at the same instants show no change at all. The
+test passes as soon as one segment is flat and fails at once on growth of
+leak magnitude (a 48-byte-per-cycle leak, the bug it was written for, adds
+10 000 blocks and 480 KiB per segment).
 
 ## 3. The menu bar app at rest
 
-`Bluemeth.app` (release bundle) sampled for 30 s next to (a) a do-nothing
+`bluemeth.app` (release bundle) sampled for 30 s next to (a) a do-nothing
 Objective-C status-item app, `scripts/leak-baseline.m`, that represents
 AppKit's floor, and (b) a `caffeinate -sdui` that had been running for an
-hour. Bluemeth is holding display, idle and system assertions with no
+hour. bluemeth is holding display, idle and system assertions with no
 countdown displayed, so it has no timer running at all.
 
 | process                          | footprint (MB) | peak footprint (MB) | CPU in 30 s (ms) | idle wake-ups | interrupt wake-ups | energy (mJ) |
 | -------------------------------- | -------------: | ------------------: | ---------------: | ------------: | -----------------: | ----------: |
-| Bluemeth.app (no countdown)      |           12.9 |                13.4 |             2.17 |             0 |                  6 |       0.004 |
+| bluemeth.app (no countdown)      |           12.9 |                13.4 |             2.17 |             0 |                  6 |       0.004 |
 | baseline ObjC app (1 Hz timer)   |           12.3 |                12.6 |              155 |             0 |                169 |        2.09 |
 | caffeinate -sdui (CLI, no UI)    |            2.3 |                 2.3 |                0 |             0 |                  0 |           0 |
 
-AppKit costs about 12 MB just to put an item in the menu bar; Bluemeth adds
+AppKit costs about 12 MB just to put an item in the menu bar; bluemeth adds
 0.6 MB on top of that and otherwise does nothing: 2 ms of CPU and six
 wake-ups in half a minute.
 
-With a countdown showing, Bluemeth updates the status item once per second.
+With a countdown showing, bluemeth updates the status item once per second.
 That costs what it costs any AppKit app to redraw a status item at 1 Hz, as
 the baseline app with its own 1 Hz title timer shows:
 
 | process                          | footprint (MB) | CPU in 30 s (ms) | idle wake-ups | interrupt wake-ups | energy (mJ) |
 | -------------------------------- | -------------: | ---------------: | ------------: | -----------------: | ----------: |
-| Bluemeth.app (1 Hz countdown)    |           13.4 |              199 |             1 |                157 |        1.66 |
+| bluemeth.app (1 Hz countdown)    |           13.4 |              199 |             1 |                157 |        1.66 |
 | baseline ObjC app (1 Hz timer)   |           12.2 |              172 |             3 |                159 |        1.70 |
 
 That is roughly 0.6 % of one core while a countdown is visible; the timer
@@ -147,7 +153,7 @@ re-signed with `get-task-allow` so all memory is inspectable:
    0 leaks, 0 bytes
 == App vs. baseline AppKit app (3 s and 13 s after launch)
                             t=3s leaks         bytes |  t=13s leaks         bytes
-   Bluemeth app              417         26496       |    417         26496
+   bluemeth app              417         26496       |    417         26496
    baseline ObjC app         417         26496       |    417         26496
    OK: no leaks beyond the AppKit baseline, no growth over time
 ```
@@ -155,8 +161,8 @@ re-signed with `get-task-allow` so all memory is inspectable:
 The 417 blocks are identical in both apps: a retain cycle around an
 `NSXPCConnection` to `com.apple.linkd.autoShortcut` that AppIntents creates
 in every AppKit process on this macOS version. None of the reported stacks
-pass through Bluemeth, objc2 or IOKit, and the count does not change while
-Bluemeth's countdown and user-activity timers run.
+pass through bluemeth, objc2 or IOKit, and the count does not change while
+bluemeth's countdown and user-activity timers run.
 
 This check found one real bug during development: `UserActivity::release`
 used `mem::forget(self)`, which also forgot the 48-byte owned name string.
@@ -169,7 +175,7 @@ cargo build --release --workspace
 target/release/bluemeth-bench process                      # section 1
 target/release/bluemeth-bench inproc                       # section 2
 target/release/bluemeth-bench inproc --iterations 30000 --user-active
-open target/Bluemeth.app && target/release/bluemeth-bench watch --pid $(pgrep -x Bluemeth) --window 30
+open target/bluemeth.app && target/release/bluemeth-bench watch --pid $(pgrep -x bluemeth-app) --window 30
 scripts/leakcheck.sh                                       # section 4
 ```
 

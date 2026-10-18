@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use bluemeth_core::macos::caffeinate::CaffeinateProcess;
 use bluemeth_core::macos::inspect::{self, AssertionInfo};
-use bluemeth_core::macos::rusage::{MallocStats, ProcessUsage};
+use bluemeth_core::macos::rusage::{LiveBlocks, MallocStats, ProcessUsage};
 use bluemeth_core::{AssertionKind, Config, Inhibitor};
 
 /// Tests inspect process-wide state, so they must not interleave.
@@ -229,14 +229,33 @@ fn drop_releases_everything() {
 
 /// A leak of a few bytes per cycle must fail this test.
 ///
-/// Live heap bytes (`malloc_zone_statistics`) are compared before and after
-/// 10 000 cycles. The physical footprint is reported too but not asserted
-/// on: it moves in 16 KiB pages and steps up once, at a variable moment in
-/// the first seconds of churn, which made a footprint-based assertion flaky.
-/// A 48-byte-per-cycle leak (the bug this test was written for) adds 480 KiB
-/// of live heap here; the threshold is 16 KiB.
+/// Live blocks and bytes are counted by walking every malloc zone's
+/// enumerator ([`LiveBlocks`], the walk `heap` and `leaks` perform) and
+/// compared across 10 000-cycle segments. `malloc_zone_statistics` and the
+/// physical footprint are reported alongside but not asserted on: the
+/// statistics over-count by whole 16 KiB nano-malloc blocks at moments that
+/// depend on timing and load (see `rusage.rs`), and the footprint moves in
+/// 16 KiB pages at moments of its own. A 48-byte-per-cycle leak (the bug
+/// this test was written for) adds 10 000 blocks and 480 KiB per segment.
+///
+/// To look at the heap by hand, `BLUEMETH_MEMTEST_PAUSE=<secs>` holds the
+/// process at every sample point so `heap -s <pid>` can be run against it.
 #[test]
 fn repeated_cycles_do_not_grow_memory() {
+    // Cycles per measured segment, and how many segments to try at most.
+    const SEGMENT: usize = 10_000;
+    const MAX_SEGMENTS: usize = 5;
+    // Even the smallest possible per-cycle leak, one 16-byte block, adds
+    // SEGMENT blocks per segment. Growth of that order is a leak whatever
+    // else is going on, so it fails immediately.
+    const LEAK_BLOCKS: i64 = SEGMENT as i64 / 2;
+
+    struct Snapshot {
+        live: LiveBlocks,
+        stats: MallocStats,
+        usage: ProcessUsage,
+    }
+
     let _guard = serial();
     let name = "bluemeth-test-cycles";
     let mut inhibitor = Inhibitor::new(name);
@@ -251,39 +270,67 @@ fn repeated_cycles_do_not_grow_memory() {
 
     // Apple's frameworks free some per-call bookkeeping asynchronously on
     // their own dispatch queues; a short pause lets that backlog drain so it
-    // is not mistaken for growth.
+    // is not mistaken for growth (and leaves the zones quiet for the walk).
     let settle = || sleep(Duration::from_millis(300));
+    let pause = std::env::var("BLUEMETH_MEMTEST_PAUSE")
+        .ok()
+        .and_then(|secs| secs.parse::<u64>().ok())
+        .map(Duration::from_secs);
     let sample = || {
         settle();
-        (MallocStats::sample(), ProcessUsage::sample_self().unwrap())
+        if let Some(pause) = pause {
+            eprintln!(
+                "pid {}: paused {pause:?} for inspection",
+                std::process::id()
+            );
+            sleep(pause);
+        }
+        Snapshot {
+            live: LiveBlocks::sample().unwrap(),
+            stats: MallocStats::sample(),
+            usage: ProcessUsage::sample_self().unwrap(),
+        }
     };
 
+    // A per-cycle leak grows every segment; anything else that moves (a
+    // framework filling a cache once, a page of allocator bookkeeping) does
+    // so at most a few times. So after a warm-up, keep measuring segments
+    // until one is completely flat in both block count and bytes, which a
+    // leak can never produce.
     cycles(&mut inhibitor, 1000);
-    let (heap_a, usage_a) = sample();
-    cycles(&mut inhibitor, 10_000);
-    let (heap_b, usage_b) = sample();
-    cycles(&mut inhibitor, 10_000);
-    let (heap_c, usage_c) = sample();
-    assert_eq!(own(name), no_rows());
-
-    let report = |label: &str,
-                  h0: &MallocStats,
-                  h1: &MallocStats,
-                  u0: &ProcessUsage,
-                  u1: &ProcessUsage| {
-        let heap = h1.size_in_use as i64 - h0.size_in_use as i64;
-        let blocks = i64::from(h1.blocks_in_use) - i64::from(h0.blocks_in_use);
-        let footprint = u1.phys_footprint as i64 - u0.phys_footprint as i64;
+    let mut prev = sample();
+    let mut flat = false;
+    for segment in 0..MAX_SEGMENTS {
+        cycles(&mut inhibitor, SEGMENT);
+        let next = sample();
+        let blocks = next.live.count as i64 - prev.live.count as i64;
+        let bytes = next.live.bytes as i64 - prev.live.bytes as i64;
+        let stats_blocks =
+            i64::from(next.stats.blocks_in_use) - i64::from(prev.stats.blocks_in_use);
+        let stats_bytes = next.stats.size_in_use as i64 - prev.stats.size_in_use as i64;
+        let footprint = next.usage.phys_footprint as i64 - prev.usage.phys_footprint as i64;
+        let from = 1000 + segment * SEGMENT;
         eprintln!(
-            "{label}: live heap {heap:+} bytes ({blocks:+} blocks), footprint {footprint:+} bytes"
+            "cycles {from}..{}: live blocks {blocks:+} ({bytes:+} bytes) by enumeration, now {} blocks / {} bytes; \
+             zone statistics {stats_blocks:+} blocks ({stats_bytes:+} bytes); footprint {footprint:+} bytes",
+            from + SEGMENT,
+            next.live.count,
+            next.live.bytes
         );
-        heap
-    };
-    let first = report("cycles 1000..11000", &heap_a, &heap_b, &usage_a, &usage_b);
-    let second = report("cycles 11000..21000", &heap_b, &heap_c, &usage_b, &usage_c);
+        assert!(
+            blocks < LEAK_BLOCKS,
+            "{blocks} more live blocks after {SEGMENT} cycles: a per-cycle leak"
+        );
+        if blocks <= 0 && bytes <= 0 {
+            flat = true;
+            break;
+        }
+        prev = next;
+    }
+    assert_eq!(own(name), no_rows());
     assert!(
-        second < 16 * 1024,
-        "live heap grew {second} bytes over 10000 cycles (and {first} over the previous 10000): a per-cycle leak"
+        flat,
+        "live heap grew in every one of {MAX_SEGMENTS} segments of {SEGMENT} cycles (see the per-segment report above)"
     );
 }
 

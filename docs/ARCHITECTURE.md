@@ -6,7 +6,7 @@ crates/
           └─ macos/       IOKit FFI, RAII assertions, assertion-table inspector,
                           `caffeinate` subprocess backend, proc_pid_rusage sampler
   cli/    bluemeth        caffeinate-compatible CLI (kqueue wait loop, no polling)
-  app/    bluemeth-app    AppKit menu bar app (objc2); bundled as Bluemeth.app
+  app/    bluemeth-app    AppKit menu bar app (objc2); bundled as bluemeth.app
   bench/  bluemeth-bench  resource benchmarks: caffeinate vs bluemeth, in-process vs spawn
 ```
 
@@ -20,7 +20,7 @@ assertion API. It calls `IOPMAssertionCreateWithProperties` once per flag
 `TimeoutActionRelease` for `-t`. Assertions belong to the calling process;
 `powerd` releases them when the process exits.
 
-Bluemeth makes exactly those calls from inside the process that wants to stay
+bluemeth makes exactly those calls from inside the process that wants to stay
 awake. Compared with a menu bar app that shells out to `caffeinate`:
 
 * **No second process.** One fewer process to launch, schedule, keep resident
@@ -66,8 +66,10 @@ reference implementation so the two can be measured side by side
 * `cargo test --workspace` includes end-to-end tests that create assertions
   and read them back from `powerd`'s table (`IOPMCopyAssertionsByProcess`),
   verify the timeout property and that `powerd` releases on its own, and run
-  20 000 create/release cycles asserting that live heap bytes and block
-  counts (summed over every malloc zone) stop changing after warm-up.
+  create/release cycles in 10 000-cycle segments until one segment leaves
+  the live heap (every malloc block, enumerated with libmalloc's own zone
+  enumerator as `heap` does) completely unchanged, which a per-cycle leak
+  can never do.
 * `scripts/leakcheck.sh` runs Apple's `leaks` on the CLI (`--atExit`) and the
   live app.
 * CI also lints the finished bundle: `plutil -lint` on its Info.plist,
@@ -79,7 +81,9 @@ reference implementation so the two can be measured side by side
 ## Why the app binary is called `bluemeth-app`
 
 Cargo puts every workspace binary in `target/<profile>/`. The CLI is
-`bluemeth`; on macOS's case-insensitive filesystem a binary named `Bluemeth`
-would be the *same file*, and the two would overwrite each other. The bundle
-script copies `bluemeth-app` to `Bluemeth.app/Contents/MacOS/Bluemeth`, so the
-process name users see is still `Bluemeth`.
+`bluemeth`, so the app's binary needs another name: on macOS's case-insensitive
+filesystem even a name that differs only in case would be the *same file*, and
+the two would overwrite each other. The bundle keeps that name
+(`bluemeth.app/Contents/MacOS/bluemeth-app`), so `pgrep -x bluemeth` and
+`killall bluemeth` only ever match the CLI. Menus, Login Items and Activity
+Monitor show the bundle's name, `bluemeth`.
