@@ -12,7 +12,9 @@ use std::time::Duration;
 use bluemeth_core::{AssertionKind, Inhibitor, format_duration, parse_duration};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication, NSApplicationActivationPolicy,
     NSApplicationDelegate, NSCellImagePosition, NSControlStateValue, NSControlStateValueMixed,
@@ -20,8 +22,8 @@ use objc2_app_kit::{
     NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSTextField, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
-    NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes,
-    NSSize, NSString, NSTimer, ns_string,
+    NSData, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSRunLoop,
+    NSRunLoopCommonModes, NSSize, NSString, NSTimer, ns_string,
 };
 
 use crate::format::countdown;
@@ -30,9 +32,11 @@ use crate::prefs;
 use crate::presets::{PRESETS, is_preset};
 use crate::settings::{MENU_KINDS, Settings};
 
-const APP_NAME: &str = "Bluemeth";
-const SYMBOL_ACTIVE: &str = "cup.and.saucer.fill";
-const SYMBOL_IDLE: &str = "cup.and.saucer";
+const APP_NAME: &str = "bluemeth";
+/// Menu bar icons rendered by scripts/make-icon.sh: the pill in colour while
+/// keeping awake, grey and faded while idle. Each TIFF holds 1x and 2x images.
+const ICON_ACTIVE: &[u8] = include_bytes!("../../../assets/StatusIcon.tiff");
+const ICON_IDLE: &[u8] = include_bytes!("../../../assets/StatusIconIdle.tiff");
 /// Tag of the "Custom…" timeout item; presets use their seconds as tag.
 const CUSTOM_TAG: isize = -1;
 
@@ -389,7 +393,7 @@ impl Controller {
                 ui.login_item.setEnabled(true);
                 ui.login_item.setState(NSControlStateValueMixed);
                 ui.login_item.setToolTip(Some(ns_string!(
-                    "Approve Bluemeth in System Settings › General › Login Items"
+                    "Approve bluemeth in System Settings › General › Login Items"
                 )));
             }
             LoginItem::Unavailable(why) => {
@@ -555,20 +559,17 @@ fn menu_item_with_key(
     }
 }
 
-fn symbol_image(name: &str) -> Option<Retained<NSImage>> {
-    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-        &NSString::from_str(name),
-        Some(ns_string!("Bluemeth")),
-    )?;
-    image.setTemplate(true);
+fn status_image(tiff: &[u8]) -> Option<Retained<NSImage>> {
+    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(tiff))?;
+    image.setAccessibilityDescription(Some(&NSString::from_str(APP_NAME)));
     Some(image)
 }
 
 fn build_ui(mtm: MainThreadMarker) -> Ui {
     let status_item =
         NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
-    let image_active = symbol_image(SYMBOL_ACTIVE);
-    let image_idle = symbol_image(SYMBOL_IDLE);
+    let image_active = status_image(ICON_ACTIVE);
+    let image_idle = status_image(ICON_IDLE);
     if let Some(button) = status_item.button(mtm) {
         button.setImage(image_idle.as_deref());
         button.setImagePosition(NSCellImagePosition::ImageOnly);
@@ -636,7 +637,7 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
     menu.addItem(&login_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
-    let quit_item = menu_item_with_key(mtm, "Quit Bluemeth", Some(sel!(quit:)), "q");
+    let quit_item = menu_item_with_key(mtm, &format!("Quit {APP_NAME}"), Some(sel!(quit:)), "q");
     menu.addItem(&quit_item);
 
     status_item.setMenu(Some(&menu));
@@ -661,7 +662,7 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
 
 /// Build the UI and run the AppKit main loop. Never returns.
 pub fn run() {
-    let mtm = MainThreadMarker::new().expect("Bluemeth must start on the main thread");
+    let mtm = MainThreadMarker::new().expect("bluemeth must start on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     // No Dock icon, no menu bar of our own: a pure status item app.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);

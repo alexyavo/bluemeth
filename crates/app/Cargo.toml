@@ -1,6 +1,6 @@
 [package]
 name = "bluemeth-app"
-description = "Bluemeth menu bar app"
+description = "bluemeth menu bar app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,7 +17,7 @@ bluemeth-core.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-foundation = { workspace = true, features = ["std", "objc2-core-foundation", "NSString", "NSObject", "NSTimer", "NSUserDefaults", "NSBundle", "NSThread", "NSDate", "NSRunLoop", "NSError", "NSURL", "NSNotification", "NSArray", "NSDictionary", "NSValue", "NSGeometry", "NSProcessInfo", "NSObjCRuntime"] }
+objc2-foundation = { workspace = true, features = ["std", "objc2-core-foundation", "NSString", "NSObject", "NSTimer", "NSUserDefaults", "NSBundle", "NSThread", "NSDate", "NSRunLoop", "NSError", "NSURL", "NSNotification", "NSArray", "NSDictionary", "NSValue", "NSGeometry", "NSProcessInfo", "NSObjCRuntime", "NSData"] }
 objc2-app-kit = { workspace = true, features = ["std", "objc2-core-foundation", "NSFont", "NSFontDescriptor", "NSApplication", "NSResponder", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSMenu", "NSMenuItem", "NSImage", "NSAlert", "NSTextField", "NSCell", "NSEvent", "NSWorkspace", "NSRunningApplication", "NSWindow", "NSPanel"] }
 objc2-service-management = { workspace = true, features = ["std", "objc2", "objc2-foundation", "SMAppService"] }
 block2.workspace = true

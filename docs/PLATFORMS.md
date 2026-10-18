@@ -1,6 +1,6 @@
 # Platform support
 
-Bluemeth is macOS-first. The crate layout keeps the platform-specific part
+bluemeth is macOS-first. The crate layout keeps the platform-specific part
 small so other operating systems can be added without touching the CLI or
 the app's state logic.
 

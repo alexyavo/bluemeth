@@ -26,10 +26,10 @@ install:
 	scripts/bundle.sh --install
 
 login:
-	/Applications/Bluemeth.app/Contents/MacOS/Bluemeth --login-item enable
+	/Applications/bluemeth.app/Contents/MacOS/bluemeth-app --login-item enable
 
 unlogin:
-	/Applications/Bluemeth.app/Contents/MacOS/Bluemeth --login-item disable
+	/Applications/bluemeth.app/Contents/MacOS/bluemeth-app --login-item disable
 
 leaks:
 	scripts/leakcheck.sh

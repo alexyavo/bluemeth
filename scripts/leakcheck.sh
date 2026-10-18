@@ -62,7 +62,7 @@ leaks "$BASE" >"$WORK/base-13.txt" 2>&1 || true
 app3=$(count "$WORK/app-3.txt"); app13=$(count "$WORK/app-13.txt")
 base3=$(count "$WORK/base-3.txt"); base13=$(count "$WORK/base-13.txt")
 printf '   %-22s %6s leaks %7s bytes | %6s leaks %7s bytes\n' "" "t=3s" "" "t=13s" ""
-printf '   %-22s %6s       %7s       | %6s       %7s\n' "Bluemeth app" "$app3" "$(bytes "$WORK/app-3.txt")" "$app13" "$(bytes "$WORK/app-13.txt")"
+printf '   %-22s %6s       %7s       | %6s       %7s\n' "bluemeth app" "$app3" "$(bytes "$WORK/app-3.txt")" "$app13" "$(bytes "$WORK/app-13.txt")"
 printf '   %-22s %6s       %7s       | %6s       %7s\n' "baseline ObjC app" "$base3" "$(bytes "$WORK/base-3.txt")" "$base13" "$(bytes "$WORK/base-13.txt")"
 if [ "$app13" -gt "$base13" ] || [ "$app13" -gt "$app3" ]; then
     echo "   FAIL: the app leaks beyond the AppKit baseline. Roots:"

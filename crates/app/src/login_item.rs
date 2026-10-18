@@ -16,7 +16,7 @@ pub enum LoginItem {
 
 fn available() -> Result<(), &'static str> {
     if NSBundle::mainBundle().bundleIdentifier().is_none() {
-        return Err("Available when running from Bluemeth.app");
+        return Err("Available when running from bluemeth.app");
     }
     let macos13 = NSOperatingSystemVersion {
         majorVersion: 13,

@@ -1,20 +1,25 @@
 #!/bin/sh
-# Render the app icon from the source artwork in assets/.
+# Render the app icon and the menu bar icon from the source artwork in assets/.
 #
-#   scripts/make-icon.sh    -> assets/AppIcon.icns and docs/icon.png
+#   scripts/make-icon.sh    -> assets/AppIcon.icns, docs/icon.png and
+#                              assets/StatusIcon.tiff, assets/StatusIconIdle.tiff
 #
 # Layout follows Apple's macOS app icon template: a 1024 px canvas, an 824 px
 # rounded square (corner radius 185) with a soft drop shadow, and the artwork
 # centred on it. Every .icns slot is downsampled from that master in linear
 # light with a Lanczos filter and written as a stripped, maximally compressed
-# PNG. Needs ImageMagick 7 (`brew install imagemagick`); iconutil ships with
-# macOS. The outputs are committed, so building the bundle needs neither.
+# PNG. The menu bar icons are the pill alone, in colour while keeping awake and
+# grey and faded while idle, each a TIFF holding the 1x and 2x images. Needs
+# ImageMagick 7 (`brew install imagemagick`); iconutil ships with macOS. The
+# outputs are committed, so building the bundle needs neither.
 set -eu
 cd "$(dirname "$0")/.."
 
 SRC=assets/bluemeth-open-seam-enamel.png
 ICNS=assets/AppIcon.icns
 PREVIEW=docs/icon.png
+STATUS_ACTIVE=assets/StatusIcon.tiff
+STATUS_IDLE=assets/StatusIconIdle.tiff
 
 command -v magick >/dev/null 2>&1 || {
     echo "make-icon.sh: ImageMagick 7 (magick) is required: brew install imagemagick" >&2
@@ -31,6 +36,9 @@ RADIUS=185
 PILL=640        # longest side of the pill's solid bounding box on the canvas
 PAD=60          # room for the shadow blur around the plate
 SHADOW_DY=12
+STATUS=18       # menu bar icon size in points
+STATUS_PILL=17  # longest side of the pill's solid bounding box in the menu bar, in points
+IDLE_ALPHA=0.5  # opacity of the idle menu bar icon
 
 # Deterministic, small PNGs: no metadata, no timestamps, zlib level 9.
 PNG="-depth 8 -strip -define png:compression-level=9 -define png:compression-filter=5 -define png:exclude-chunk=date,time"
@@ -95,6 +103,25 @@ cp "$WORK/icon_1024.png" "$ICONSET/icon_512x512@2x.png"
 iconutil -c icns "$ICONSET" -o "$ICNS"
 cp "$ICONSET/icon_256x256.png" "$PREVIEW"
 
+# --- menu bar icons: a square around the pill's solid bounding box ----------
+SIDE=$(awk -v bw="$BW" -v bh="$BH" -v s="$STATUS" -v p="$STATUS_PILL" \
+           'BEGIN { m = (bw > bh) ? bw : bh; printf "%d\n", m * s / p + 0.5 }')
+SX=$((BX + BW / 2 - SIDE / 2))
+SY=$((BY + BH / 2 - SIDE / 2))
+magick "$SRC" -crop "${SIDE}x${SIDE}+${SX}+${SY}" +repage "$WORK/pill.png"
+status() { # status <output> [extra magick options]
+    out=$1; shift
+    for scale in 1 2; do
+        magick "$WORK/pill.png" -colorspace RGB -filter Lanczos -resize "$((STATUS * scale))x$((STATUS * scale))" \
+            -colorspace sRGB "$@" -set units PixelsPerInch -set density $((72 * scale)) "$WORK/status@$scale.png"
+    done
+    # TIFF keeps both resolutions in one file; NSImage picks the one the screen needs
+    magick "$WORK/status@1.png" "$WORK/status@2.png" -depth 8 -strip -compress lzw -define tiff:predictor=2 "$out"
+}
+status "$STATUS_ACTIVE"
+status "$STATUS_IDLE" -colorspace Gray -colorspace sRGB -channel A -evaluate multiply "$IDLE_ALPHA" +channel
+
 echo "source  $SRC: ${SW}x${SH}, solid bbox ${BBOX}"
 echo "artwork placed at ${OFFSET} scaled to ${SIZE%!}"
 echo "wrote   $ICNS ($(du -h "$ICNS" | cut -f1)), $PREVIEW ($(du -h "$PREVIEW" | cut -f1))"
+echo "wrote   $STATUS_ACTIVE, $STATUS_IDLE (${STATUS} pt, pill ${STATUS_PILL} pt)"

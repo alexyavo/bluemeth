@@ -9,9 +9,9 @@ int main(void) {
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         NSStatusItem *item = [[NSStatusBar systemStatusBar]
             statusItemWithLength:NSVariableStatusItemLength];
-        NSImage *img = [NSImage imageWithSystemSymbolName:@"cup.and.saucer"
-                                 accessibilityDescription:nil];
-        img.template = YES;
+        // the app's menu bar icon, loaded the way the app loads it (run from the repository root)
+        NSImage *img = [[NSImage alloc]
+            initWithData:[NSData dataWithContentsOfFile:@"assets/StatusIcon.tiff"]];
         item.button.image = img;
         item.button.font = [NSFont monospacedDigitSystemFontOfSize:[NSFont menuBarFontOfSize:0].pointSize
                                                             weight:NSFontWeightRegular];

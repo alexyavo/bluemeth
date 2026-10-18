@@ -1,4 +1,4 @@
-//! Bluemeth: a minimal menu bar app that keeps your Mac awake.
+//! bluemeth: a minimal menu bar app that keeps your Mac awake.
 //!
 //! One `NSStatusItem`, one `NSMenu`, one controller object, and an
 //! [`bluemeth_core::Inhibitor`] holding IOKit assertions in-process. No
@@ -48,7 +48,7 @@ fn main() {
     #[cfg(not(target_os = "macos"))]
     {
         eprintln!(
-            "Bluemeth's menu bar app is macOS-only; see docs/PLATFORMS.md for other platforms."
+            "bluemeth's menu bar app is macOS-only; see docs/PLATFORMS.md for other platforms."
         );
         std::process::exit(1);
     }

@@ -27,9 +27,9 @@ jobs:
         run: scripts/bundle.sh
       - name: Bundle sanity
         run: |
-          plutil -lint target/Bluemeth.app/Contents/Info.plist
-          codesign --verify --strict target/Bluemeth.app
-          iconutil -c iconset target/Bluemeth.app/Contents/Resources/AppIcon.icns -o /tmp/AppIcon.iconset
+          plutil -lint target/bluemeth.app/Contents/Info.plist
+          codesign --verify --strict target/bluemeth.app
+          iconutil -c iconset target/bluemeth.app/Contents/Resources/AppIcon.icns -o /tmp/AppIcon.iconset
           test -f /tmp/AppIcon.iconset/icon_512x512@2x.png
       - name: Leak check (CLI)
         run: |
