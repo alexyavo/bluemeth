@@ -1,0 +1,16 @@
+[package]
+name = "bluemeth-core"
+description = "Cross-platform sleep-inhibition primitives (IOKit power assertions on macOS)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { workspace = true, features = ["std", "CFBase", "CFString", "CFDictionary", "CFNumber", "CFArray"] }
+libc.workspace = true
+
+[lints]
+workspace = true

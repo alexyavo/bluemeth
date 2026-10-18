@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/cli", "crates/app", "crates/bench"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/alexyavo/bluemeth"
+authors = ["alexyavo <alxndr.yav@gmail.com>"]
+
+[workspace.dependencies]
+bluemeth-core = { path = "crates/core" }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false }
+objc2-app-kit = { version = "0.3", default-features = false }
+objc2-core-foundation = { version = "0.3", default-features = false }
+objc2-service-management = { version = "0.3", default-features = false }
+block2 = "0.6"
+lexopt = "0.3"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+[profile.bench-profile]
+inherits = "release"
+strip = false
+debug = "line-tables-only"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+doc_markdown = "allow"
+struct_excessive_bools = "allow"

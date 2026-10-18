@@ -1,0 +1,25 @@
+[package]
+name = "bluemeth-bench"
+description = "Resource-usage benchmarks: bluemeth vs /usr/bin/caffeinate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "bluemeth-bench"
+path = "src/main.rs"
+
+[dependencies]
+bluemeth-core.workspace = true
+lexopt.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { workspace = true, features = ["std", "CFBase", "CFString", "CFDictionary", "CFNumber", "CFArray"] }
+
+[lints]
+workspace = true

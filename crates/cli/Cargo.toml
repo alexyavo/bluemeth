@@ -1,0 +1,21 @@
+[package]
+name = "bluemeth-cli"
+description = "caffeinate-compatible command line keep-awake tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "bluemeth"
+path = "src/main.rs"
+
+[dependencies]
+bluemeth-core.workspace = true
+lexopt.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true
