@@ -1,4 +1,4 @@
-.PHONY: build release test lint bench bundle install leaks run clean
+.PHONY: build release test lint bench icon bundle install login unlogin leaks run clean
 
 build:
 	cargo build --workspace
@@ -16,11 +16,20 @@ lint:
 bench: release
 	target/release/bluemeth-bench all
 
+icon:
+	scripts/make-icon.sh
+
 bundle:
 	scripts/bundle.sh
 
 install:
 	scripts/bundle.sh --install
+
+login:
+	/Applications/Bluemeth.app/Contents/MacOS/Bluemeth --login-item enable
+
+unlogin:
+	/Applications/Bluemeth.app/Contents/MacOS/Bluemeth --login-item disable
 
 leaks:
 	scripts/leakcheck.sh

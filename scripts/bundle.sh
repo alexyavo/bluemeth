@@ -10,12 +10,15 @@ VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP=target/Bluemeth.app
 BIN=target/release/bluemeth-app
 BUNDLE_ID=com.alexyavo.bluemeth
+ICON=assets/AppIcon.icns
 
 cargo build --release -p bluemeth-app
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Bluemeth"
+[ -f "$ICON" ] || { echo "bundle.sh: $ICON is missing; run scripts/make-icon.sh" >&2; exit 1; }
+cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,6 +37,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<string>Bluemeth</string>
 	<key>CFBundleDisplayName</key>
 	<string>Bluemeth</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -66,5 +71,9 @@ echo "built $APP ($(du -sh "$APP" | cut -f1))"
 if [ "${1:-}" = "--install" ]; then
     rm -rf /Applications/Bluemeth.app
     cp -R "$APP" /Applications/Bluemeth.app
+    touch /Applications/Bluemeth.app   # make Finder refresh its icon cache
     echo "installed /Applications/Bluemeth.app"
+    if pgrep -xq Bluemeth; then
+        echo "note: Bluemeth is running; quit and relaunch it to pick up this build"
+    fi
 fi

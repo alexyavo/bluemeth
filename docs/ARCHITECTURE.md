@@ -70,6 +70,8 @@ reference implementation so the two can be measured side by side
   counts (summed over every malloc zone) stop changing after warm-up.
 * `scripts/leakcheck.sh` runs Apple's `leaks` on the CLI (`--atExit`) and the
   live app.
+* CI also lints the finished bundle: `plutil -lint` on its Info.plist,
+  `codesign --verify --strict`, and an `iconutil` round trip of the icon.
 * `bluemeth-bench` reports CPU time, idle wake-ups, physical footprint, and
   energy from `proc_pid_rusage`, the same counters Activity Monitor shows.
   See `docs/BENCHMARKS.md`.

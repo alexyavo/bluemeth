@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" alt="Bluemeth icon" width="128"></p>
+
 # Bluemeth
 
 A keep-awake menu bar app for macOS that does what `caffeinate` does, without
@@ -82,13 +84,25 @@ make lint             # rustfmt + clippy with -D warnings
 make run              # run the menu bar app unbundled (Launch at Login disabled)
 make bundle           # target/Bluemeth.app, ad-hoc signed
 make install          # ...and copy it to /Applications
+make login            # register /Applications/Bluemeth.app as a login item
+make unlogin          # ...and remove it again
+make icon             # re-render assets/AppIcon.icns from assets/*.png (needs ImageMagick)
 make leaks            # scripts/leakcheck.sh
 make bench            # release build + bluemeth-bench all
 ```
 
 `Launch at Login` uses `SMAppService` and therefore needs the bundled app
-(macOS 13+). The bundle is ad-hoc signed; replace `-` in `scripts/bundle.sh`
-with a Developer ID to notarise.
+(macOS 13+). The same switch is scriptable, which is what `make login` runs:
+
+```sh
+/Applications/Bluemeth.app/Contents/MacOS/Bluemeth --login-item enable|disable|status
+```
+
+The bundle is ad-hoc signed; replace `-` in `scripts/bundle.sh` with a
+Developer ID to notarise. The app icon is rendered from the artwork in
+`assets/` by `scripts/make-icon.sh` (Apple's 1024 px icon grid, every `.icns`
+slot downsampled in linear light); the result is committed so a plain
+`make bundle` needs no ImageMagick.
 
 ### CLI
 
