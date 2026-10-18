@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(cfg.caffeinate_args(), ["-disu", "-t", "10"]);
         assert_eq!(cfg.caffeinate_command_line(), "caffeinate -disu -t 10");
         assert_eq!(Config::idle_only().caffeinate_args(), ["-i"]);
-        assert!(Config::default().caffeinate_args().is_empty());
+        assert_eq!(Config::default().caffeinate_args(), Vec::<String>::new());
     }
 
     #[test]

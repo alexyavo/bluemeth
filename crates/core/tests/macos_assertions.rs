@@ -26,6 +26,12 @@ fn own(name: &str) -> Vec<AssertionInfo> {
         .collect()
 }
 
+/// `assert_eq!` against this (rather than `assert!(..is_empty())`) prints the
+/// offending rows when a test fails.
+fn no_rows() -> Vec<AssertionInfo> {
+    Vec::new()
+}
+
 fn kinds_of(rows: &[AssertionInfo]) -> Vec<AssertionKind> {
     let mut kinds: Vec<_> = rows.iter().filter_map(AssertionInfo::kind_enum).collect();
     kinds.sort();
@@ -48,7 +54,7 @@ fn creates_and_releases_each_kind() {
     let _guard = serial();
     let name = "bluemeth-test-each-kind";
     let mut inhibitor = Inhibitor::new(name);
-    assert!(own(name).is_empty(), "stale assertions from a previous run");
+    assert_eq!(own(name), no_rows(), "stale assertions from a previous run");
 
     for kind in AssertionKind::ALL {
         let cfg = Config::default().with(kind, true);
@@ -105,7 +111,7 @@ fn apply_is_a_diff_not_a_rebuild() {
     assert_eq!(own(name).len(), 2);
 
     inhibitor.apply(&Config::default()).unwrap();
-    assert!(own(name).is_empty());
+    assert_eq!(own(name), no_rows());
     assert!(!inhibitor.is_active());
 }
 
@@ -179,7 +185,7 @@ fn changing_timeout_recreates_with_new_deadline() {
             .is_some_and(|r| r > Duration::from_secs(59))
     );
     inhibitor.release_all().unwrap();
-    assert!(own(name).is_empty());
+    assert_eq!(own(name), no_rows());
 }
 
 #[test]
@@ -205,7 +211,7 @@ fn user_activity_declares_and_refreshes() {
     // Refreshing before the interval elapses is a no-op; both paths succeed.
     inhibitor.refresh_user_activity().unwrap();
     inhibitor.release_all().unwrap();
-    assert!(own(name).is_empty());
+    assert_eq!(own(name), no_rows());
     assert!(inhibitor.next_user_activity_due().is_none());
 }
 
@@ -218,7 +224,7 @@ fn drop_releases_everything() {
         inhibitor.apply(&Config::all()).unwrap();
         assert_eq!(own(name).len(), 4, "3 assertions + UserIsActive");
     }
-    assert!(own(name).is_empty(), "drop must release all assertions");
+    assert_eq!(own(name), no_rows(), "drop must release all assertions");
 }
 
 /// A leak of a few bytes per cycle must fail this test.
@@ -247,7 +253,7 @@ fn repeated_cycles_do_not_grow_memory() {
     let a = ProcessUsage::sample_self().unwrap();
     cycles(&mut inhibitor, 10_000);
     let b = ProcessUsage::sample_self().unwrap();
-    assert!(own(name).is_empty());
+    assert_eq!(own(name), no_rows());
 
     let growth = b.phys_footprint as i64 - a.phys_footprint as i64;
     assert!(
