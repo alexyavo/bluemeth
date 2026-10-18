@@ -87,7 +87,7 @@ make bundle           # target/bluemeth.app, ad-hoc signed
 make install          # ...and copy it to /Applications
 make login            # register /Applications/bluemeth.app as a login item
 make unlogin          # ...and remove it again
-make icon             # re-render assets/AppIcon.icns from assets/*.png (needs ImageMagick)
+make icon             # re-render the app and menu bar icons from assets/*.png (needs ImageMagick)
 make leaks            # scripts/leakcheck.sh
 make bench            # release build + bluemeth-bench all
 ```
@@ -100,10 +100,11 @@ make bench            # release build + bluemeth-bench all
 ```
 
 The bundle is ad-hoc signed; replace `-` in `scripts/bundle.sh` with a
-Developer ID to notarise. The app icon is rendered from the artwork in
-`assets/` by `scripts/make-icon.sh` (Apple's 1024 px icon grid, every `.icns`
-slot downsampled in linear light); the result is committed so a plain
-`make bundle` needs no ImageMagick.
+Developer ID to notarise. The app icon and the two menu bar icons (the pill
+in colour while keeping awake, faded grey while idle) are rendered from the
+artwork in `assets/` by `scripts/make-icon.sh` (Apple's 1024 px icon grid,
+every `.icns` slot downsampled in linear light); the results are committed so
+a plain `make bundle` needs no ImageMagick.
 
 ### CLI
 
@@ -125,7 +126,8 @@ crates/core    bluemeth-core    Config, Inhibitor, IOKit backend, inspector, rus
 crates/cli     bluemeth         CLI (kqueue-based wait loop)
 crates/app     bluemeth-app     AppKit menu bar app via objc2, bundled as bluemeth.app
 crates/bench   bluemeth-bench   benchmarks
-scripts/       bundle.sh, leakcheck.sh, leak-baseline.m
+scripts/       bundle.sh, make-icon.sh, leakcheck.sh, leak-baseline.m
+assets/        pill artwork, AppIcon.icns, StatusIcon.tiff, StatusIconIdle.tiff
 docs/          ARCHITECTURE.md, BENCHMARKS.md, PLATFORMS.md
 ```
 
