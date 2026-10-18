@@ -89,10 +89,21 @@ declaration (`bluemeth-bench inproc --iterations 30000 --user-active`):
 | after  |           3.21 |          8.29 |
 | delta  |              0 |             0 |
 
-The footprint steps up by exactly two pages (32 KiB) once, within the first
-second or two of churn, and never again; the core test
-`repeated_cycles_do_not_grow_memory` measures 10 000 cycles after a warm-up
-and fails on 64 KiB of growth (an 8-byte-per-cycle leak would add 80 KiB).
+The physical footprint moves in 16 KiB pages, so the core test
+`repeated_cycles_do_not_grow_memory` instead reads the live heap directly
+from every malloc zone (`malloc_zone_statistics`, byte-exact) after 1 000,
+11 000 and 21 000 cycles, pausing briefly before each sample so Apple's
+frameworks can drain their asynchronous bookkeeping. Three consecutive runs:
+
+```
+cycles  1000..11000: live heap +49120 bytes (+1194 blocks)
+cycles 11000..21000: live heap     +0 bytes    (+0 blocks)
+```
+
+About 49 KiB of small blocks is allocated once by the system frameworks
+during the first few thousand IPCs and never again; the test asserts on the
+second segment and fails above 16 KiB (an 8-byte-per-cycle leak would add
+80 KiB there, the 48-byte leak it was written for 480 KiB).
 
 ## 3. The menu bar app at rest
 

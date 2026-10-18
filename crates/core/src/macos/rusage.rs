@@ -92,6 +92,90 @@ impl ProcessUsage {
     }
 }
 
+/// Live heap accounting from the malloc zones, via `malloc_zone_statistics`.
+///
+/// Unlike the physical footprint this is byte-exact and independent of page
+/// granularity: a leaked allocation shows up as growth in `size_in_use`
+/// regardless of whether it happened to need a new page. Rust's global
+/// allocator, CoreFoundation and IOKit's client code all allocate through
+/// these zones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MallocStats {
+    /// Number of live allocations.
+    pub blocks_in_use: u32,
+    /// Bytes in live allocations.
+    pub size_in_use: u64,
+    /// Bytes the zones have obtained from the kernel.
+    pub size_allocated: u64,
+}
+
+#[repr(C)]
+struct MallocStatisticsT {
+    blocks_in_use: libc::c_uint,
+    size_in_use: libc::size_t,
+    max_size_in_use: libc::size_t,
+    size_allocated: libc::size_t,
+}
+
+unsafe extern "C" {
+    // <mach/mach_init.h>: the current task's port, which `mach_task_self()` reads.
+    static mach_task_self_: libc::mach_port_t;
+    // From <malloc/malloc.h>. The process has several zones (the "nano" zone
+    // for small blocks, a scalable zone for the rest), so statistics have to
+    // be summed over all of them.
+    fn malloc_get_all_zones(
+        task: libc::mach_port_t,
+        reader: *mut libc::c_void,
+        addresses: *mut *mut *mut libc::c_void,
+        count: *mut libc::c_uint,
+    ) -> libc::kern_return_t;
+    fn malloc_zone_statistics(zone: *mut libc::c_void, stats: *mut MallocStatisticsT);
+}
+
+impl MallocStats {
+    /// Sample every malloc zone of the calling process and sum them.
+    pub fn sample() -> Self {
+        let mut zones: *mut *mut libc::c_void = std::ptr::null_mut();
+        let mut count: libc::c_uint = 0;
+        // SAFETY: `mach_task_self_` is a process-wide constant set up by the
+        // kernel before main; querying our own task with a NULL reader
+        // (meaning "read directly"); `zones` and `count` are valid out-pointers.
+        let kr = unsafe {
+            malloc_get_all_zones(
+                mach_task_self_,
+                std::ptr::null_mut(),
+                &raw mut zones,
+                &raw mut count,
+            )
+        };
+        let mut total = Self::default();
+        if kr != libc::KERN_SUCCESS || zones.is_null() {
+            return total;
+        }
+        for i in 0..count as usize {
+            // SAFETY: `zones` points at `count` zone pointers owned by libmalloc,
+            // valid for the life of the process.
+            let zone = unsafe { *zones.add(i) };
+            if zone.is_null() {
+                continue;
+            }
+            let mut stats = MallocStatisticsT {
+                blocks_in_use: 0,
+                size_in_use: 0,
+                max_size_in_use: 0,
+                size_allocated: 0,
+            };
+            // SAFETY: `zone` is a live malloc zone and `stats` a valid,
+            // writable struct matching the C layout of malloc_statistics_t.
+            unsafe { malloc_zone_statistics(zone, &raw mut stats) };
+            total.blocks_in_use = total.blocks_in_use.saturating_add(stats.blocks_in_use);
+            total.size_in_use += stats.size_in_use as u64;
+            total.size_allocated += stats.size_allocated as u64;
+        }
+        total
+    }
+}
+
 /// `ri_user_time`/`ri_system_time` are in mach absolute time units.
 fn mach_to_ns(ticks: u64) -> u64 {
     let (numer, denom) = timebase();
@@ -135,6 +219,31 @@ mod tests {
         let usage = ProcessUsage::sample_self().expect("proc_pid_rusage on self");
         assert!(usage.phys_footprint > 0);
         assert!(usage.lifetime_max_phys_footprint >= usage.phys_footprint);
+    }
+
+    #[test]
+    fn malloc_stats_see_live_allocations() {
+        // Other unit tests run concurrently and allocate too, so use a block
+        // far larger than their combined churn and compare with a margin.
+        const BLOCK: u64 = 8 << 20;
+        const NOISE: u64 = 1 << 20;
+        let before = MallocStats::sample();
+        let block = vec![1u8; BLOCK as usize];
+        let during = MallocStats::sample();
+        drop(block);
+        let after = MallocStats::sample();
+        assert!(
+            during.size_in_use >= before.size_in_use + BLOCK - NOISE,
+            "allocation not visible: before {} during {}",
+            before.size_in_use,
+            during.size_in_use
+        );
+        assert!(
+            after.size_in_use + BLOCK <= during.size_in_use + NOISE,
+            "free not visible: during {} after {}",
+            during.size_in_use,
+            after.size_in_use
+        );
     }
 
     #[test]

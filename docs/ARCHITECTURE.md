@@ -66,7 +66,8 @@ reference implementation so the two can be measured side by side
 * `cargo test --workspace` includes end-to-end tests that create assertions
   and read them back from `powerd`'s table (`IOPMCopyAssertionsByProcess`),
   verify the timeout property and that `powerd` releases on its own, and run
-  1000 create/release cycles asserting the physical footprint does not grow.
+  20 000 create/release cycles asserting that live heap bytes and block
+  counts (summed over every malloc zone) stop changing after warm-up.
 * `scripts/leakcheck.sh` runs Apple's `leaks` on the CLI (`--atExit`) and the
   live app.
 * `bluemeth-bench` reports CPU time, idle wake-ups, physical footprint, and

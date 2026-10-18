@@ -63,8 +63,9 @@ requirement, not a nice-to-have:
 * `unsafe` exists only at the FFI edges, every block has a `SAFETY:` comment,
   and `clippy::undocumented_unsafe_blocks` is a hard error.
 * `cargo test` includes end-to-end checks against `powerd`'s live assertion
-  table and a test that runs thousands of create/release cycles and fails on
-  any per-cycle growth of the process footprint.
+  table and a test that runs 20 000 create/release cycles and fails if the
+  live heap (bytes or block count, summed over every malloc zone) grows at
+  all after warm-up.
 * `scripts/leakcheck.sh` runs Apple's `leaks` on the CLI (must report 0) and
   on the live app next to the Objective-C baseline app (must not exceed it,
   must not grow over time). `bluemeth-bench inproc` reports zero footprint

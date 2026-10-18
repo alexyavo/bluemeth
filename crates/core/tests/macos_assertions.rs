@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use bluemeth_core::macos::caffeinate::CaffeinateProcess;
 use bluemeth_core::macos::inspect::{self, AssertionInfo};
-use bluemeth_core::macos::rusage::ProcessUsage;
+use bluemeth_core::macos::rusage::{MallocStats, ProcessUsage};
 use bluemeth_core::{AssertionKind, Config, Inhibitor};
 
 /// Tests inspect process-wide state, so they must not interleave.
@@ -229,12 +229,12 @@ fn drop_releases_everything() {
 
 /// A leak of a few bytes per cycle must fail this test.
 ///
-/// Measured behaviour (`bluemeth-bench inproc --user-active`): the footprint
-/// steps up by exactly two pages (32 KiB) once, somewhere in the first couple
-/// of seconds of churn, and then stays flat over 30 000 cycles. So the test
-/// measures a run long enough that any per-cycle leak dwarfs that step: a
-/// leak of 8 bytes per cycle adds 80 KiB over 10 000 cycles, the 48-byte leak
-/// this test was written for adds 480 KiB, and the threshold is 64 KiB.
+/// Live heap bytes (`malloc_zone_statistics`) are compared before and after
+/// 10 000 cycles. The physical footprint is reported too but not asserted
+/// on: it moves in 16 KiB pages and steps up once, at a variable moment in
+/// the first seconds of churn, which made a footprint-based assertion flaky.
+/// A 48-byte-per-cycle leak (the bug this test was written for) adds 480 KiB
+/// of live heap here; the threshold is 16 KiB.
 #[test]
 fn repeated_cycles_do_not_grow_memory() {
     let _guard = serial();
@@ -249,16 +249,41 @@ fn repeated_cycles_do_not_grow_memory() {
         }
     };
 
+    // Apple's frameworks free some per-call bookkeeping asynchronously on
+    // their own dispatch queues; a short pause lets that backlog drain so it
+    // is not mistaken for growth.
+    let settle = || sleep(Duration::from_millis(300));
+    let sample = || {
+        settle();
+        (MallocStats::sample(), ProcessUsage::sample_self().unwrap())
+    };
+
     cycles(&mut inhibitor, 1000);
-    let a = ProcessUsage::sample_self().unwrap();
+    let (heap_a, usage_a) = sample();
     cycles(&mut inhibitor, 10_000);
-    let b = ProcessUsage::sample_self().unwrap();
+    let (heap_b, usage_b) = sample();
+    cycles(&mut inhibitor, 10_000);
+    let (heap_c, usage_c) = sample();
     assert_eq!(own(name), no_rows());
 
-    let growth = b.phys_footprint as i64 - a.phys_footprint as i64;
+    let report = |label: &str,
+                  h0: &MallocStats,
+                  h1: &MallocStats,
+                  u0: &ProcessUsage,
+                  u1: &ProcessUsage| {
+        let heap = h1.size_in_use as i64 - h0.size_in_use as i64;
+        let blocks = i64::from(h1.blocks_in_use) - i64::from(h0.blocks_in_use);
+        let footprint = u1.phys_footprint as i64 - u0.phys_footprint as i64;
+        eprintln!(
+            "{label}: live heap {heap:+} bytes ({blocks:+} blocks), footprint {footprint:+} bytes"
+        );
+        heap
+    };
+    let first = report("cycles 1000..11000", &heap_a, &heap_b, &usage_a, &usage_b);
+    let second = report("cycles 11000..21000", &heap_b, &heap_c, &usage_b, &usage_c);
     assert!(
-        growth < 64 * 1024,
-        "footprint grew {growth} bytes over 10000 cycles: a per-cycle leak"
+        second < 16 * 1024,
+        "live heap grew {second} bytes over 10000 cycles (and {first} over the previous 10000): a per-cycle leak"
     );
 }
 
