@@ -5,7 +5,7 @@
 A keep-awake menu bar app for macOS that does what `caffeinate` does, without
 `caffeinate`. Written in Rust, one process, no polling, nothing spawned.
 
-<img src="docs/menu.png" alt="bluemeth menu" width="245" align="right">
+<img src="docs/menu.png" alt="bluemeth menu" width="247" align="right">
 
 * **Prevent Display Sleep**, **Prevent Idle Sleep**, **Prevent System Sleep**
   and **Declare User Active**, each toggled independently. These are the four
