@@ -51,14 +51,12 @@ struct Ui {
     image_active: Option<Retained<NSImage>>,
     image_idle: Option<Retained<NSImage>>,
     menu: Retained<NSMenu>,
-    header: Retained<NSMenuItem>,
+    toggle_all_item: Retained<NSMenuItem>,
     error_item: Retained<NSMenuItem>,
     kind_items: Vec<(AssertionKind, Retained<NSMenuItem>)>,
     user_active_item: Retained<NSMenuItem>,
     timeout_items: Vec<Retained<NSMenuItem>>,
     custom_item: Retained<NSMenuItem>,
-    enable_all_item: Retained<NSMenuItem>,
-    stop_all_item: Retained<NSMenuItem>,
     login_item: Retained<NSMenuItem>,
     quit_item: Retained<NSMenuItem>,
 }
@@ -145,15 +143,13 @@ define_class!(
             self.restart_with_settings();
         }
 
-        #[unsafe(method(enableAll:))]
-        fn enable_all(&self, _sender: &NSMenuItem) {
-            self.ivars().state.borrow_mut().settings.set_all(true);
-            self.apply_settings();
-        }
-
-        #[unsafe(method(stopAll:))]
-        fn stop_all(&self, _sender: &NSMenuItem) {
-            self.ivars().state.borrow_mut().settings.set_all(false);
+        #[unsafe(method(toggleAll:))]
+        fn toggle_all(&self, _sender: &NSMenuItem) {
+            {
+                let mut state = self.ivars().state.borrow_mut();
+                let enable = !state.inhibitor.is_active();
+                state.settings.set_all(enable);
+            }
             self.apply_settings();
         }
 
@@ -211,8 +207,7 @@ impl Controller {
             .chain([
                 &ui.user_active_item,
                 &ui.custom_item,
-                &ui.enable_all_item,
-                &ui.stop_all_item,
+                &ui.toggle_all_item,
                 &ui.login_item,
                 &ui.quit_item,
             ]);
@@ -267,7 +262,7 @@ impl Controller {
             match state.inhibitor.poll_expired() {
                 Ok(true) => {
                     // The countdown ran out: everything is released, so the
-                    // toggles go off too, like pressing Stop All.
+                    // toggles go off too, like pressing Disable.
                     state.settings.set_all(false);
                     prefs::save(&state.settings);
                     true
@@ -289,7 +284,6 @@ impl Controller {
                 state.last_error = Some(err.to_string());
             }
         }
-        self.update_header();
         self.update_status_button();
     }
 
@@ -374,9 +368,11 @@ impl Controller {
             ui.custom_item.setState(NSControlStateValueOn);
         }
 
-        ui.enable_all_item
-            .setEnabled(!(active && settings.all_on()));
-        ui.stop_all_item.setEnabled(active);
+        ui.toggle_all_item.setTitle(if active {
+            ns_string!("Disable")
+        } else {
+            ns_string!("Enable")
+        });
 
         match login_item::status() {
             LoginItem::Enabled => {
@@ -412,23 +408,7 @@ impl Controller {
             None => ui.error_item.setHidden(true),
         }
 
-        self.update_header();
         self.update_status_button();
-    }
-
-    fn update_header(&self) {
-        let (active, remaining) = {
-            let state = self.ivars().state.borrow();
-            (state.inhibitor.is_active(), state.inhibitor.remaining())
-        };
-        let title = match (active, remaining) {
-            (false, _) => format!("{APP_NAME}: sleep allowed"),
-            (true, None) => format!("{APP_NAME}: keeping awake"),
-            (true, Some(left)) => {
-                format!("{APP_NAME}: keeping awake, {} left", countdown(left))
-            }
-        };
-        self.ivars().ui.header.setTitle(&NSString::from_str(&title));
     }
 
     fn update_status_button(&self) {
@@ -585,9 +565,8 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
     let menu = NSMenu::new(mtm);
     menu.setAutoenablesItems(false);
 
-    let header = menu_item(mtm, APP_NAME, None);
-    header.setEnabled(false);
-    menu.addItem(&header);
+    let toggle_all_item = menu_item(mtm, "Enable", Some(sel!(toggleAll:)));
+    menu.addItem(&toggle_all_item);
     let error_item = menu_item(mtm, "", None);
     error_item.setEnabled(false);
     error_item.setHidden(true);
@@ -627,12 +606,6 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
     menu.addItem(&timeout_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
-    let enable_all_item = menu_item(mtm, "Enable All", Some(sel!(enableAll:)));
-    menu.addItem(&enable_all_item);
-    let stop_all_item = menu_item(mtm, "Stop All", Some(sel!(stopAll:)));
-    menu.addItem(&stop_all_item);
-    menu.addItem(&NSMenuItem::separatorItem(mtm));
-
     let login_item = menu_item(mtm, "Launch at Login", Some(sel!(toggleLaunchAtLogin:)));
     menu.addItem(&login_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
@@ -647,14 +620,12 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
         image_active,
         image_idle,
         menu,
-        header,
+        toggle_all_item,
         error_item,
         kind_items,
         user_active_item,
         timeout_items,
         custom_item,
-        enable_all_item,
-        stop_all_item,
         login_item,
         quit_item,
     }

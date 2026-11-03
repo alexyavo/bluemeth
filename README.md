@@ -12,7 +12,8 @@ A keep-awake menu bar app for macOS that does what `caffeinate` does, without
   things `caffeinate -d -i -s -u` do.
 * **Timeout**: never, a preset (5 min to 4 h) or a custom duration such as
   `1h30m`. The remaining time counts down in the menu bar.
-* **Enable All / Stop All**, **Launch at Login**, and that is the whole UI.
+* **Enable / Disable** at the top toggles all keep-awake options together;
+  **Launch at Login** starts the app automatically.
 * Settings persist across launches; relaunching at login resumes keeping the
   Mac awake.
 

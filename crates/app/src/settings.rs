@@ -57,11 +57,6 @@ impl Settings {
         }
     }
 
-    /// Every menu toggle is on.
-    pub fn all_on(&self) -> bool {
-        self.user_active && MENU_KINDS.iter().all(|k| self.kind(*k))
-    }
-
     pub fn set_all(&mut self, on: bool) {
         for kind in MENU_KINDS {
             self.set_kind(kind, on);
@@ -93,7 +88,6 @@ mod tests {
     #[test]
     fn defaults_keep_awake_without_user_activity() {
         let s = Settings::default();
-        assert!(!s.all_on());
         let cfg = s.to_config();
         assert!(cfg.prevent_display_sleep && cfg.prevent_idle_sleep && cfg.prevent_system_sleep);
         assert!(!cfg.declare_user_active);
@@ -105,7 +99,7 @@ mod tests {
     fn set_all_round_trips() {
         let mut s = Settings::default();
         s.set_all(true);
-        assert!(s.all_on());
+        assert!(s.user_active && MENU_KINDS.iter().all(|kind| s.kind(*kind)));
         s.set_all(false);
         assert!(!s.to_config().any_enabled());
     }
