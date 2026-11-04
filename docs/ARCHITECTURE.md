@@ -35,11 +35,44 @@ awake. Compared with a menu bar app that shells out to `caffeinate`:
 * **Nothing to poll.** The CLI blocks in one `kevent` call until a signal,
   a watched process exit, or the deadline; it has zero wake-ups while idle.
   The app runs a timer only while a countdown is visible (1 Hz, coalescable)
-  or while user-activity refreshes are needed (every 15 s); otherwise none.
+  or while user-activity refreshes are needed (every 15 s); otherwise none,
+  unless the optional input simulation below is enabled.
 
 `crates/core/src/macos/caffeinate.rs` keeps the subprocess approach as a
 reference implementation so the two can be measured side by side
 (`bluemeth-bench inproc`).
+
+## Optional input simulation
+
+The menu bar app's **Simulate Activity** setting is independent of IOKit and
+the CLI. It stays off by default and is excluded from the global Enable
+action; global Disable stops it. `input_activity.rs` calls CoreGraphics
+directly, posting an F20 key-down followed immediately by its key-up at the
+HID event tap. It generates no mouse events. Both events are allocated before
+posting either so allocation failure cannot leave F20 pressed. Each event
+is a `CFRetained<CFType>` and is released on return.
+
+The existing AppKit timer checks every 30 seconds while simulation is enabled.
+It reads the combined session input-idle clock and only posts after 60 seconds
+of inactivity, provided no mouse button, Shift/Control/Option/Command/Fn key,
+or F20 key is held. There are no event taps, input logs, helper processes, or extra
+threads. A delayed timer performs at most one check, without catching up.
+
+Only clicking the option calls `CGRequestPostEventAccess`; restoring settings
+and timer ticks use `CGPreflightPostEventAccess` without prompting. Missing
+access stops simulation, clears the saved toggle, and displays an error.
+Settings and the common session deadline cover simulation even without any
+IOKit assertions. Expiry is checked before posting, using the core's
+sleep-inclusive monotonic clock. Changing the timeout restarts the session;
+changing other toggles preserves its deadline.
+
+Input-idle time is separate from `IOPMAssertionDeclareUserActivity`. Chromium's
+[macOS idle implementation](https://raw.githubusercontent.com/chromium/chromium/main/ui/base/idle/idle_mac.mm)
+reads `CGEventSourceSecondsSinceLastEventType` with the combined session state.
+Input simulation is still best effort for Slack: it does not override a
+manual away status or guarantee presence while locked, disconnected, or in
+a browser. It can also wake or hold the display awake, and apps or custom
+shortcuts bound to F20 can react to it.
 
 ## Memory and lifetime rules
 
@@ -74,6 +107,12 @@ reference implementation so the two can be measured side by side
   live app.
 * CI also lints the finished bundle: `plutil -lint` on its Info.plist,
   `codesign --verify --strict`, and an `iconutil` round trip of the icon.
+* App tests cover simulation scheduling, deadline expiry, stopping and
+  restarting, invalid idle readings, and explicit opt-in. The ignored
+  `f20_resets_input_idle_time_and_releases_key` test posts an F20 press/release
+  pair and verifies the idle clock resets and F20 is released; run it from an Accessibility-
+  authorized terminal with an idle desktop:
+  `cargo test -p bluemeth-app f20_resets_input_idle_time_and_releases_key -- --ignored`.
 * `bluemeth-bench` reports CPU time, idle wake-ups, physical footprint, and
   energy from `proc_pid_rusage`, the same counters Activity Monitor shows.
   See `docs/BENCHMARKS.md`.

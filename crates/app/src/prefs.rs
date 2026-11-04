@@ -16,6 +16,9 @@ fn key_system() -> &'static NSString {
 fn key_user_active() -> &'static NSString {
     ns_string!("declareUserActive")
 }
+fn key_simulate_activity() -> &'static NSString {
+    ns_string!("simulateActivity")
+}
 fn key_timeout() -> &'static NSString {
     ns_string!("timeoutSeconds")
 }
@@ -31,6 +34,7 @@ pub fn load() -> Settings {
         idle: defaults.boolForKey(key_idle()),
         system: defaults.boolForKey(key_system()),
         user_active: defaults.boolForKey(key_user_active()),
+        simulate_activity: defaults.boolForKey(key_simulate_activity()),
         timeout_secs: u64::try_from(defaults.integerForKey(key_timeout())).unwrap_or(0),
     }
 }
@@ -42,6 +46,7 @@ pub fn save(settings: &Settings) {
     defaults.setBool_forKey(settings.idle, key_idle());
     defaults.setBool_forKey(settings.system, key_system());
     defaults.setBool_forKey(settings.user_active, key_user_active());
+    defaults.setBool_forKey(settings.simulate_activity, key_simulate_activity());
     defaults.setInteger_forKey(
         isize::try_from(settings.timeout_secs).unwrap_or(isize::MAX),
         key_timeout(),

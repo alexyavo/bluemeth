@@ -19,6 +19,8 @@ pub struct Settings {
     pub idle: bool,
     pub system: bool,
     pub user_active: bool,
+    /// Opt-in input simulation, separate from power-management assertions.
+    pub simulate_activity: bool,
     /// 0 means no timeout.
     pub timeout_secs: u64,
 }
@@ -33,6 +35,7 @@ impl Default for Settings {
             idle: true,
             system: true,
             user_active: false,
+            simulate_activity: false,
             timeout_secs: 0,
         }
     }
@@ -62,6 +65,11 @@ impl Settings {
             self.set_kind(kind, on);
         }
         self.user_active = on;
+        // Enabling the usual keep-awake options must not opt into input
+        // simulation or request Accessibility access. Disable stops it too.
+        if !on {
+            self.simulate_activity = false;
+        }
     }
 
     pub fn timeout(&self) -> Option<Duration> {
@@ -91,6 +99,7 @@ mod tests {
         let cfg = s.to_config();
         assert!(cfg.prevent_display_sleep && cfg.prevent_idle_sleep && cfg.prevent_system_sleep);
         assert!(!cfg.declare_user_active);
+        assert!(!s.simulate_activity);
         assert!(!cfg.prevent_disk_idle);
         assert_eq!(cfg.timeout, None);
     }
@@ -102,6 +111,18 @@ mod tests {
         assert!(s.user_active && MENU_KINDS.iter().all(|kind| s.kind(*kind)));
         s.set_all(false);
         assert!(!s.to_config().any_enabled());
+    }
+
+    #[test]
+    fn simulation_requires_opt_in_and_disable_stops_it() {
+        let mut s = Settings::default();
+        s.set_all(true);
+        assert!(!s.simulate_activity);
+        s.simulate_activity = true;
+        s.set_all(true);
+        assert!(s.simulate_activity);
+        s.set_all(false);
+        assert!(!s.simulate_activity);
     }
 
     #[test]

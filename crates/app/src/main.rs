@@ -3,7 +3,7 @@
 //! One `NSStatusItem`, one `NSMenu`, one controller object, and an
 //! [`bluemeth_core::Inhibitor`] holding IOKit assertions in-process. No
 //! windows, no subprocesses, no timers unless a countdown or a user-activity
-//! refresh is actually needed.
+//! refresh or input simulation is actually needed.
 //!
 //! Started without arguments it runs the menu bar app. A few switches exist
 //! for scripts (`make login`, `make unlogin`):
@@ -22,9 +22,12 @@
 mod format;
 mod presets;
 mod settings;
+mod simulation;
 
 #[cfg(target_os = "macos")]
 mod controller;
+#[cfg(target_os = "macos")]
+mod input_activity;
 #[cfg(target_os = "macos")]
 mod login_item;
 #[cfg(target_os = "macos")]

@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-use bluemeth_core::{AssertionKind, Inhibitor, format_duration, parse_duration};
+use bluemeth_core::{AssertionKind, Inhibitor, Monotonic, format_duration, now, parse_duration};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{
@@ -27,10 +27,12 @@ use objc2_foundation::{
 };
 
 use crate::format::countdown;
+use crate::input_activity;
 use crate::login_item::{self, LoginItem};
 use crate::prefs;
 use crate::presets::{PRESETS, is_preset};
 use crate::settings::{MENU_KINDS, Settings};
+use crate::simulation::{CHECK_INTERVAL, Simulation};
 
 const APP_NAME: &str = "bluemeth";
 /// Menu bar icons rendered by scripts/make-icon.sh: the pill in colour while
@@ -43,7 +45,65 @@ const CUSTOM_TAG: isize = -1;
 struct State {
     settings: Settings,
     inhibitor: Inhibitor,
+    simulation: Simulation,
+    session_deadline: Option<Monotonic>,
     last_error: Option<String>,
+}
+
+impl State {
+    fn new(settings: Settings) -> Self {
+        Self {
+            settings,
+            inhibitor: Inhibitor::new(APP_NAME),
+            simulation: Simulation::default(),
+            session_deadline: None,
+            last_error: None,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.inhibitor.is_active() || self.simulation.is_active()
+    }
+
+    fn deadline(&self) -> Option<Monotonic> {
+        self.session_deadline
+    }
+
+    /// Permission is checked by the controller before enabling simulation.
+    fn reconcile(&mut self, restart: bool) {
+        let time = now();
+        let previous_deadline = if restart {
+            None
+        } else {
+            self.deadline().filter(|deadline| *deadline > time)
+        };
+        let config = self.settings.to_config();
+        let result = if restart && config.any_enabled() {
+            self.inhibitor.restart(&config)
+        } else {
+            self.inhibitor.apply(&config)
+        };
+        self.last_error = result.err().map(|e| e.to_string());
+        let deadline = previous_deadline
+            .or_else(|| self.inhibitor.deadline())
+            .or_else(|| self.settings.timeout().map(|timeout| time + timeout));
+        self.simulation
+            .configure(self.settings.simulate_activity, deadline, time);
+        // Preserve the common deadline when either simulation or the last
+        // power assertion is disabled while the other remains active.
+        self.session_deadline = self.is_active().then_some(deadline).flatten();
+    }
+
+    fn expire_if_due(&mut self, time: Monotonic) -> bool {
+        if self.deadline().is_none_or(|deadline| time < deadline) {
+            return false;
+        }
+        self.settings.set_all(false);
+        self.simulation.configure(false, None, time);
+        self.session_deadline = None;
+        self.last_error = self.inhibitor.release_all().err().map(|e| e.to_string());
+        true
+    }
 }
 
 struct Ui {
@@ -55,6 +115,7 @@ struct Ui {
     error_item: Retained<NSMenuItem>,
     kind_items: Vec<(AssertionKind, Retained<NSMenuItem>)>,
     user_active_item: Retained<NSMenuItem>,
+    simulate_activity_item: Retained<NSMenuItem>,
     timeout_items: Vec<Retained<NSMenuItem>>,
     custom_item: Retained<NSMenuItem>,
     login_item: Retained<NSMenuItem>,
@@ -128,6 +189,17 @@ define_class!(
             self.apply_settings();
         }
 
+        #[unsafe(method(toggleSimulateActivity:))]
+        fn toggle_simulate_activity(&self, _sender: &NSMenuItem) {
+            let enable = !self.ivars().state.borrow().simulation.is_active();
+            if enable && !input_activity::request_access() {
+                self.show_error("Allow activity simulation", input_activity::ACCESS_REQUIRED);
+                return;
+            }
+            self.ivars().state.borrow_mut().settings.simulate_activity = enable;
+            self.apply_settings();
+        }
+
         #[unsafe(method(selectTimeout:))]
         fn select_timeout(&self, sender: &NSMenuItem) {
             let tag = sender.tag();
@@ -147,7 +219,7 @@ define_class!(
         fn toggle_all(&self, _sender: &NSMenuItem) {
             {
                 let mut state = self.ivars().state.borrow_mut();
-                let enable = !state.inhibitor.is_active();
+                let enable = !state.is_active();
                 state.settings.set_all(enable);
             }
             self.apply_settings();
@@ -206,6 +278,7 @@ impl Controller {
             .chain(ui.timeout_items.iter())
             .chain([
                 &ui.user_active_item,
+                &ui.simulate_activity_item,
                 &ui.custom_item,
                 &ui.toggle_all_item,
                 &ui.login_item,
@@ -222,28 +295,28 @@ impl Controller {
 
     /// Persist settings and reconcile the inhibitor with them.
     fn apply_settings(&self) {
-        {
-            let mut state = self.ivars().state.borrow_mut();
-            prefs::save(&state.settings);
-            let config = state.settings.to_config();
-            let result = state.inhibitor.apply(&config);
-            state.last_error = result.err().map(|e| e.to_string());
-        }
-        self.after_state_change();
+        self.reconcile_settings(false);
     }
 
     /// Like `apply_settings`, but restart the countdown from the full timeout.
     fn restart_with_settings(&self) {
+        self.reconcile_settings(true);
+    }
+
+    fn reconcile_settings(&self, restart: bool) {
         {
             let mut state = self.ivars().state.borrow_mut();
+            // Restoring settings never opens a permission prompt. Missing or
+            // revoked access turns this option off, with an actionable error.
+            let access_missing = state.settings.simulate_activity && !input_activity::has_access();
+            if access_missing {
+                state.settings.simulate_activity = false;
+            }
+            state.reconcile(restart);
+            if access_missing {
+                state.last_error = Some(input_activity::ACCESS_ERROR.to_owned());
+            }
             prefs::save(&state.settings);
-            let config = state.settings.to_config();
-            let result = if config.any_enabled() {
-                state.inhibitor.restart(&config)
-            } else {
-                state.inhibitor.apply(&config)
-            };
-            state.last_error = result.err().map(|e| e.to_string());
         }
         self.after_state_change();
     }
@@ -259,47 +332,60 @@ impl Controller {
     fn on_tick(&self) {
         let expired = {
             let mut state = self.ivars().state.borrow_mut();
-            match state.inhibitor.poll_expired() {
-                Ok(true) => {
-                    // The countdown ran out: everything is released, so the
-                    // toggles go off too, like pressing Disable.
-                    state.settings.set_all(false);
-                    prefs::save(&state.settings);
-                    true
-                }
-                Ok(false) => false,
-                Err(err) => {
-                    state.last_error = Some(err.to_string());
-                    true
-                }
+            if state.expire_if_due(now()) {
+                prefs::save(&state.settings);
+                true
+            } else {
+                false
             }
         };
         if expired {
             self.after_state_change();
             return;
         }
-        {
+        let changed = {
             let mut state = self.ivars().state.borrow_mut();
+            let mut changed = false;
             if let Err(err) = state.inhibitor.refresh_user_activity() {
                 state.last_error = Some(err.to_string());
+                changed = true;
             }
+            if state.simulation.check_due(now()) {
+                if let Err(err) = input_activity::pulse_if_idle() {
+                    state.settings.simulate_activity = false;
+                    state.simulation.configure(false, None, now());
+                    if !state.is_active() {
+                        state.session_deadline = None;
+                    }
+                    state.last_error = Some(err.to_owned());
+                    prefs::save(&state.settings);
+                    changed = true;
+                }
+            }
+            changed
+        };
+        if changed {
+            self.after_state_change();
+        } else {
+            self.update_status_button();
         }
-        self.update_status_button();
     }
 
     /// Run a timer only when there is something to do: 1 Hz while a
-    /// countdown is showing, otherwise half the user-activity interval.
+    /// countdown is showing, otherwise at the activity check interval.
     fn reschedule_timer(&self) {
         self.stop_timer();
         let interval = {
             let state = self.ivars().state.borrow();
-            if !state.inhibitor.is_active() {
+            if !state.is_active() {
                 return;
             }
-            if state.inhibitor.deadline().is_some() {
+            if state.deadline().is_some() {
                 1.0
             } else if state.inhibitor.next_user_activity_due().is_some() {
                 Inhibitor::USER_ACTIVITY_INTERVAL.as_secs_f64() / 2.0
+            } else if state.simulation.is_active() {
+                CHECK_INTERVAL.as_secs_f64()
             } else {
                 return;
             }
@@ -341,7 +427,7 @@ impl Controller {
             (
                 state.inhibitor.current(),
                 state.settings,
-                state.inhibitor.is_active(),
+                state.is_active(),
                 state.last_error.clone(),
             )
         };
@@ -351,6 +437,8 @@ impl Controller {
         }
         ui.user_active_item
             .setState(state_value(current.declare_user_active));
+        ui.simulate_activity_item
+            .setState(state_value(settings.simulate_activity));
 
         for item in &ui.timeout_items {
             let secs = u64::try_from(item.tag()).unwrap_or(u64::MAX);
@@ -424,10 +512,13 @@ impl Controller {
                 .filter(|k| current.is_enabled(**k))
                 .map(|k| k.label().trim_start_matches("Prevent "))
                 .chain(current.declare_user_active.then_some("User Active"))
+                .chain(state.simulation.is_active().then_some("Simulate Activity"))
                 .collect();
             (
-                state.inhibitor.is_active(),
-                state.inhibitor.remaining(),
+                state.is_active(),
+                state
+                    .deadline()
+                    .map(|deadline| deadline.remaining_from(now())),
                 held.join(", "),
             )
         };
@@ -448,7 +539,7 @@ impl Controller {
         }
 
         let tooltip = if active {
-            format!("{APP_NAME}: keeping awake ({held})")
+            format!("{APP_NAME}: active ({held})")
         } else {
             format!("{APP_NAME}: sleep allowed")
         };
@@ -583,9 +674,18 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
     }
     let user_active_item = menu_item(mtm, "Declare User Active", Some(sel!(toggleUserActive:)));
     user_active_item.setToolTip(Some(ns_string!(
-        "Simulates user activity every 30 s: turns the display on and resets the idle timer"
+        "Wakes the display and postpones display sleep every 30 s; does not simulate keyboard or mouse input"
     )));
     menu.addItem(&user_active_item);
+    let simulate_activity_item = menu_item(
+        mtm,
+        "Simulate Activity",
+        Some(sel!(toggleSimulateActivity:)),
+    );
+    simulate_activity_item.setToolTip(Some(ns_string!(
+        "Presses and releases F20 after 60 s idle to help apps such as Slack stay active. Requires Accessibility access; may trigger F20 shortcuts or keep the display awake."
+    )));
+    menu.addItem(&simulate_activity_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let timeout_item = menu_item(mtm, "Timeout", None);
@@ -624,6 +724,7 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
         error_item,
         kind_items,
         user_active_item,
+        simulate_activity_item,
         timeout_items,
         custom_item,
         login_item,
@@ -638,11 +739,7 @@ pub fn run() {
     // No Dock icon, no menu bar of our own: a pure status item app.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
-    let state = State {
-        settings: prefs::load(),
-        inhibitor: Inhibitor::new(APP_NAME),
-        last_error: None,
-    };
+    let state = State::new(prefs::load());
     let ui = build_ui(mtm);
     let controller = Controller::new(mtm, ui, state);
     controller.install_targets();
@@ -675,4 +772,86 @@ fn debug_hooks(controller: &Controller) {
     };
     // SAFETY: see `reschedule_timer`.
     unsafe { NSRunLoop::currentRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn simulation_only() -> State {
+        let mut settings = Settings::default();
+        settings.set_all(false);
+        settings.simulate_activity = true;
+        settings.timeout_secs = 300;
+        let mut state = State::new(settings);
+        state.reconcile(false);
+        assert!(state.last_error.is_none());
+        state
+    }
+
+    #[test]
+    fn simulation_alone_counts_as_active_and_expires() {
+        let mut state = simulation_only();
+        assert!(state.is_active());
+        assert!(!state.inhibitor.is_active());
+        assert!(!state.expire_if_due(now()));
+        let deadline = state.deadline().unwrap();
+        assert!(state.expire_if_due(deadline));
+        assert!(!state.is_active());
+        assert!(!state.settings.simulate_activity);
+        assert_eq!(state.deadline(), None);
+        assert!(!state.simulation.check_due(deadline));
+    }
+
+    #[test]
+    fn switching_between_simulation_and_assertions_preserves_deadline() {
+        let mut state = simulation_only();
+        let deadline = state.deadline();
+        state.settings.idle = true;
+        state.reconcile(false);
+        assert!(state.last_error.is_none());
+        assert!(state.inhibitor.is_active());
+        assert_eq!(state.deadline(), deadline);
+
+        state.settings.simulate_activity = false;
+        state.reconcile(false);
+        assert!(state.is_active());
+        assert!(!state.simulation.is_active());
+        assert_eq!(state.deadline(), deadline);
+
+        state.settings.simulate_activity = true;
+        state.settings.idle = false;
+        state.reconcile(false);
+        assert!(!state.inhibitor.is_active());
+        assert!(state.simulation.is_active());
+        assert_eq!(state.deadline(), deadline);
+    }
+
+    #[test]
+    fn timeout_changes_restart_simulation_and_never_removes_timeout() {
+        let mut state = simulation_only();
+        let original = state.deadline().unwrap();
+        state.settings.timeout_secs = 600;
+        state.reconcile(true);
+        assert!(state.deadline().unwrap() > original);
+        state.settings.timeout_secs = 0;
+        state.reconcile(true);
+        assert_eq!(state.deadline(), None);
+        assert!(state.is_active());
+        assert!(!state.expire_if_due(now() + Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn disable_stops_simulation_only_session() {
+        let mut state = simulation_only();
+        state.settings.set_all(false);
+        state.reconcile(false);
+        assert!(!state.is_active());
+        assert_eq!(state.deadline(), None);
+        assert!(
+            !state
+                .simulation
+                .check_due(now() + Duration::from_secs(3600))
+        );
+    }
 }

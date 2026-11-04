@@ -3,19 +3,51 @@
 # bluemeth
 
 A keep-awake menu bar app for macOS that does what `caffeinate` does, without
-`caffeinate`. Written in Rust, one process, no polling, nothing spawned.
+`caffeinate`. Written in Rust, one process, nothing spawned.
 
 <img src="docs/menu.png" alt="bluemeth menu" width="247" align="right">
 
 * **Prevent Display Sleep**, **Prevent Idle Sleep**, **Prevent System Sleep**
   and **Declare User Active**, each toggled independently. These are the four
   things `caffeinate -d -i -s -u` do.
+* **Simulate Activity**, an additional opt-in option, presses and releases
+  **F20** after 60 seconds of input inactivity. It generates no mouse events.
+  Requires macOS
+  **Accessibility** access and can help the Slack desktop app stay active.
 * **Timeout**: never, a preset (5 min to 4 h) or a custom duration such as
   `1h30m`. The remaining time counts down in the menu bar.
-* **Enable / Disable** at the top toggles all keep-awake options together;
+* **Enable / Disable** at the top toggles the four keep-awake options together.
+  Simulate Activity must be enabled separately; Disable stops it too.
   **Launch at Login** starts the app automatically.
 * Settings persist across launches; relaunching at login resumes keeping the
   Mac awake.
+
+### Activity simulation and Slack
+
+Select **Simulate Activity**, approve bluemeth under **System Settings →
+Privacy & Security → Accessibility**, then select the option again if it
+remained unchecked. Permission is requested only when you select this option.
+If access is missing on launch or revoked later, simulation turns off and the
+menu explains how to restore it. The option is off by default, and an older
+installation stays opted out when upgraded.
+
+The app checks every 30 seconds and posts only after at least 60 seconds
+without input, skipping held mouse buttons, modifier keys, and F20. An app
+or custom shortcut bound to F20 may respond to the simulated keypress. Simulation
+uses the same timeout as the other options and works when they are all off.
+For long sessions, also enable **Prevent Idle Sleep** so the Mac stays awake
+between checks. Disable, timeout expiry, and quitting all stop simulation.
+
+Slack must be running and connected, and must not be manually set to away.
+This is best effort: a locked screen, Slack in a browser, or changes to Slack's
+presence rules can still show you as away. It does not set your Slack status
+through an API. [Slack documents its automatic and manual away rules here.](https://docs.slack.dev/apis/web-api/user-presence-and-status/)
+
+Simulated input may wake the display or prevent display sleep. To let the
+screen sleep while background processes continue, leave **Prevent Idle
+Sleep** on and turn **Prevent Display Sleep**, **Declare User Active**, and
+**Simulate Activity** off. Declare User Active only refreshes macOS power
+management; it does not generate input for apps' inactivity detection.
 
 Also in the box:
 
