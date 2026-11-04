@@ -61,6 +61,12 @@ threads. A delayed timer performs at most one check, without catching up.
 Only clicking the option calls `CGRequestPostEventAccess`; restoring settings
 and timer ticks use `CGPreflightPostEventAccess` without prompting. Missing
 access stops simulation, clears the saved toggle, and displays an error.
+The permission dialog's **Open Settings** button uses `NSWorkspace` to open
+`x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`.
+The link remains valid on macOS 27, where the pane is named **Device Control
+and Data Access**; displayed instructions and the tooltip use the name for
+the running OS version. **Not Now** leaves the option off; a failed URL open
+shows the matching manual path.
 Settings and the common session deadline cover simulation even without any
 IOKit assertions. Expiry is checked before posting, using the core's
 sleep-inclusive monotonic clock. Changing the timeout restarts the session;

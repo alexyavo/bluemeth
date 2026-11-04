@@ -20,10 +20,11 @@ use objc2_app_kit::{
     NSApplicationDelegate, NSCellImagePosition, NSControlStateValue, NSControlStateValueMixed,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontWeightRegular, NSImage, NSMenu,
     NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSTextField, NSVariableStatusItemLength,
+    NSWorkspace,
 };
 use objc2_foundation::{
     NSData, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSRunLoop,
-    NSRunLoopCommonModes, NSSize, NSString, NSTimer, ns_string,
+    NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 
 use crate::format::countdown;
@@ -193,7 +194,7 @@ define_class!(
         fn toggle_simulate_activity(&self, _sender: &NSMenuItem) {
             let enable = !self.ivars().state.borrow().simulation.is_active();
             if enable && !input_activity::request_access() {
-                self.show_error("Allow activity simulation", input_activity::ACCESS_REQUIRED);
+                self.show_activity_permission();
                 return;
             }
             self.ivars().state.borrow_mut().settings.simulate_activity = enable;
@@ -587,6 +588,35 @@ impl Controller {
         }
     }
 
+    fn show_activity_permission(&self) {
+        let mtm = self.mtm();
+        NSApplication::sharedApplication(mtm).activate();
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(ns_string!("Allow activity simulation"));
+        alert.setInformativeText(&NSString::from_str(&input_activity::access_instructions()));
+        alert.addButtonWithTitle(ns_string!("Open Settings"));
+        alert.addButtonWithTitle(ns_string!("Not Now"));
+        if alert.runModal() != NSAlertFirstButtonReturn {
+            return;
+        }
+
+        // macOS 27 calls this pane Device Control and Data Access, but still
+        // routes the legacy Accessibility link to it. Earlier versions use
+        // the same link for the pane named Accessibility.
+        let url = NSURL::URLWithString(ns_string!(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        ));
+        if !url.is_some_and(|url| NSWorkspace::sharedWorkspace().openURL(&url)) {
+            self.show_error(
+                "Could not open System Settings",
+                &format!(
+                    "Open System Settings › Privacy & Security › {} and enable bluemeth.",
+                    input_activity::permission_pane_name()
+                ),
+            );
+        }
+    }
+
     fn show_error(&self, title: &str, detail: &str) {
         let mtm = self.mtm();
         NSApplication::sharedApplication(mtm).activate();
@@ -682,9 +712,10 @@ fn build_ui(mtm: MainThreadMarker) -> Ui {
         "Simulate Activity",
         Some(sel!(toggleSimulateActivity:)),
     );
-    simulate_activity_item.setToolTip(Some(ns_string!(
-        "Presses and releases F20 after 60 s idle to help apps such as Slack stay active. Requires Accessibility access; may trigger F20 shortcuts or keep the display awake."
-    )));
+    simulate_activity_item.setToolTip(Some(&NSString::from_str(&format!(
+        "Presses and releases F20 after 60 s idle to help apps such as Slack stay active. Requires {} permission; may trigger F20 shortcuts or keep the display awake.",
+        input_activity::permission_pane_name()
+    ))));
     menu.addItem(&simulate_activity_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 

@@ -12,8 +12,8 @@ A keep-awake menu bar app for macOS that does what `caffeinate` does, without
   things `caffeinate -d -i -s -u` do.
 * **Simulate Activity**, an additional opt-in option, presses and releases
   **F20** after 60 seconds of input inactivity. It generates no mouse events.
-  Requires macOS
-  **Accessibility** access and can help the Slack desktop app stay active.
+  Requires macOS input-control permission and can help the Slack desktop app
+  stay active.
 * **Timeout**: never, a preset (5 min to 4 h) or a custom duration such as
   `1h30m`. The remaining time counts down in the menu bar.
 * **Enable / Disable** at the top toggles the four keep-awake options together.
@@ -24,9 +24,11 @@ A keep-awake menu bar app for macOS that does what `caffeinate` does, without
 
 ### Activity simulation and Slack
 
-Select **Simulate Activity**, approve bluemeth under **System Settings →
-Privacy & Security → Accessibility**, then select the option again if it
-remained unchecked. Permission is requested only when you select this option.
+Select **Simulate Activity**, then click **Open Settings** in the permission
+dialog to go directly to the correct pane. Enable bluemeth there, then select
+**Simulate Activity** again. The pane is named **Device Control and Data
+Access** on macOS 27 and later, and **Accessibility** on earlier versions,
+under **Privacy & Security**. Permission is requested only when you select this option.
 If access is missing on launch or revoked later, simulation turns off and the
 menu explains how to restore it. The option is off by default, and an older
 installation stays opted out when upgraded.

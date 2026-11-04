@@ -6,11 +6,31 @@ use std::ffi::c_void;
 use std::ptr::{self, NonNull};
 
 use objc2_core_foundation::{CFRetained, CFType};
+use objc2_foundation::NSProcessInfo;
 
 use crate::simulation::IDLE_THRESHOLD;
 
-pub const ACCESS_REQUIRED: &str = "Simulate Activity needs Accessibility access. Enable bluemeth in System Settings › Privacy & Security › Accessibility, then turn Simulate Activity on again.";
-pub const ACCESS_ERROR: &str = "Simulate Activity: Accessibility access required";
+pub const ACCESS_ERROR: &str = "Simulate Activity: input permission required";
+
+/// macOS 27 renamed the privacy pane, but kept its Accessibility APIs and URL.
+pub fn permission_pane_name() -> &'static str {
+    if NSProcessInfo::processInfo()
+        .operatingSystemVersion()
+        .majorVersion
+        >= 27
+    {
+        "Device Control and Data Access"
+    } else {
+        "Accessibility"
+    }
+}
+
+pub fn access_instructions() -> String {
+    format!(
+        "Enable bluemeth in {} to allow simulated keypresses. Then turn Simulate Activity on again.",
+        permission_pane_name()
+    )
+}
 
 const COMBINED_SESSION_STATE: i32 = 0;
 const ANY_INPUT_EVENT: u32 = u32::MAX;
@@ -122,7 +142,7 @@ mod tests {
     #[test]
     #[ignore = "presses and releases F20; needs Accessibility access and an idle desktop"]
     fn f20_resets_input_idle_time_and_releases_key() {
-        assert!(has_access(), "{ACCESS_REQUIRED}");
+        assert!(has_access(), "{}", access_instructions());
         // Wait briefly for an idle interval instead of racing ongoing input.
         for _ in 0..100 {
             if idle_seconds() >= 1.0 {
