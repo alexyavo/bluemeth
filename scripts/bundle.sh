@@ -62,8 +62,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Ad-hoc signature: stable identity for SMAppService and TCC without a
-# developer certificate. Replace "-" with your signing identity to notarise.
+# Ad-hoc signing makes the local bundle runnable, but TCC grants are pinned
+# to this build's code hash. A changed build can require fresh permission
+# approval even when Settings still shows the old entry enabled. Use a
+# consistent certificate-backed signing identity for grants to survive updates.
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 
 echo "built $APP ($(du -sh "$APP" | cut -f1))"

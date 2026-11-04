@@ -33,6 +33,14 @@ If access is missing on launch or revoked later, simulation turns off and the
 menu explains how to restore it. The option is off by default, and an older
 installation stays opted out when upgraded.
 
+If the permission switch is already on but the app still asks after an
+update, the saved grant may belong to an older build. Local bundles use
+ad-hoc signing, so changing the executable changes the identity macOS checks.
+Quit bluemeth, remove its old entry with **−**, add
+`/Applications/bluemeth.app` with **+**, enable it, then relaunch. A consistent
+certificate-backed signing identity is needed to preserve grants across
+changed builds; the bundle identifier alone is not sufficient.
+
 The app checks every 30 seconds and posts only after at least 60 seconds
 without input, skipping held mouse buttons, modifier keys, and F20. An app
 or custom shortcut bound to F20 may respond to the simulated keypress. Simulation
